@@ -1,7 +1,7 @@
 /*
  * 68040_pmmu.S - MMU initialization for 68040 (taken from set_mmu.prg).
  *
- * Copyright 2013-2017 by Odd Skancke and Miro Kropáček.
+ * Copyright 2013-2019 by Odd Skancke and Miro Kropáček.
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -168,11 +168,8 @@ turn_off_all:   moveq   #0,d0
 
                 rts
 
-
-
 //=======================================================
 
-//=======================================================
 mmusetup:
                 move.l  root_table,a0
                 move.l  a0,d0

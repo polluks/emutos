@@ -2,7 +2,7 @@
 /*      changed NUM_WOBS from 128 to 300        11/19/87        mdf     */
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -61,12 +61,13 @@ struct _windnode
         UWORD           w_flags;                /* see above */
         WORD            w_id;                   /* window handle id #   */
         WORD            w_obid;                 /* desktop object id    */
-        WORD            w_root;                 /* pseudo root ob. in   */
-                                                /*   gl_screen for this */
-                                                /*   windows objects    */
+        WORD            w_root;                 /* pseudo root object in G.g_screen */
+                                                /*  for this window's objects       */
+        WORD            w_cvcol;                /* current virt. col (iff not size-to-fit) */
         WORD            w_cvrow;                /* current virt. row    */
         WORD            w_pncol;                /* physical # of cols   */
         WORD            w_pnrow;                /* physical # of rows   */
+        WORD            w_vncol;                /* virtual # of cols (iff not size-to-fit) */
         WORD            w_vnrow;                /* virtual # of rows    */
         PNODE           w_pnode;                /* now embedded         */
         char            w_name[LEN_ZPATH+2];    /* allow for leading & trailing spaces */
@@ -81,7 +82,7 @@ struct _windnode
 
 
 /* Prototypes: */
-void win_view(WORD vtype, WORD isort);
+void win_view(void);
 int win_start(void);
 void win_free(WNODE *thewin);
 WNODE *win_alloc(WORD obid);
@@ -89,7 +90,7 @@ WNODE *win_find(WORD wh);
 void win_top(WNODE *thewin);
 WNODE *win_ontop(void);
 void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h);
-void win_slide(WORD wh, WORD sl_value);
+void win_slide(WORD wh, BOOL horizontal, WORD sl_value);
 void win_arrow(WORD wh, WORD arrow_type);
 void win_srtall(void);
 void win_bdall(void);
@@ -97,5 +98,14 @@ void win_shwall(void);
 WORD win_isel(OBJECT olist[], WORD root, WORD curr);
 void win_sname(WNODE *pw);
 void win_sinfo(WNODE *pwin, BOOL check_selected);
+WORD win_count(void);
+
+#if CONF_WITH_SEARCH
+void win_dispfile(WNODE *pw, WORD file);
+#endif
+
+#if CONF_WITH_BOTTOMTOTOP
+WNODE *win_onbottom(void);
+#endif
 
 #endif  /* _DESKWIN_H */

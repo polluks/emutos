@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,21 +19,20 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
 #include "rectfunc.h"
 #include "gsxdefs.h"
 #include "gemdos.h"
 
+#include "aesdefs.h"
+#include "aesext.h"
 #include "deskbind.h"
 #include "deskglob.h"
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
-#include "dos.h"
-#include "gembind.h"
 #include "intmath.h"
 #include "aesbind.h"
 #include "deskobj.h"
@@ -42,12 +41,9 @@
 #include "deskrsrc.h"
 #include "deskmain.h"
 #include "deskinf.h"
-#include "kprint.h"
 
 
 #define SPACE 0x20
-
-#define HOTCLOSE 0x1000
 
 #define WINDOW_STYLE (NAME | CLOSER | MOVER | FULLER | INFO | SIZER | \
                       UPARROW | DNARROW | VSLIDE | LFARROW | RTARROW | HSLIDE)
@@ -64,14 +60,9 @@
 #define INITIAL_ICON_STATE  WHITEBAK
 #endif
 
-static WNODE *windows;
-
-void win_view(WORD vtype, WORD isort)
+void win_view(void)
 {
-    G.g_iview = vtype;
-    G.g_isort = isort;
-
-    switch(vtype)
+    switch(G.g_iview)
     {
     case V_TEXT:
         G.g_iwext = LEN_FNODE * gl_wchar;
@@ -80,23 +71,32 @@ void win_view(WORD vtype, WORD isort)
          * G.g_iwint defines the width of window space in front of
          * each text line.  this must be greater than zero to allow
          * for multiple item selection by "rubber-banding"
+         *
+         * note: the '-1' aligns the text on a byte boundary, allowing
+         * the fast text output routine to be used if other conditions
+         * are met (low-rez windows can rarely take advantage of this).
          */
-        G.g_iwint = USE_WIDE_FORMAT() ? 2*gl_wchar+4 : gl_wchar+4;
+        G.g_iwint = 2*gl_wchar - 1;
         G.g_ihint = 2;
-        G.g_num = G.g_nmtext;
-        G.g_pxy = G.g_xytext;
         break;
     case V_ICON:
         G.g_iwext = G.g_wicon;
         G.g_ihext = G.g_hicon;
         G.g_iwint = MIN_WINT;
         G.g_ihint = MIN_HINT;
-        G.g_num = G.g_nmicon;
-        G.g_pxy = G.g_xyicon;
         break;
     }
     G.g_iwspc = G.g_iwext + G.g_iwint;
     G.g_ihspc = G.g_ihext + G.g_ihint;
+#if CONF_WITH_SIZE_TO_FIT
+    {
+    WORD width, dummy;
+
+    wind_calc(1, WINDOW_STYLE, G.g_xdesk, G.g_ydesk, G.g_wdesk, G.g_hdesk,
+                &dummy, &dummy, &width, &dummy);
+    G.g_icols = max(1, width / G.g_iwspc);
+    }
+#endif
 }
 
 
@@ -108,17 +108,23 @@ int win_start(void)
     WNODE *pw;
     WORD i;
 
-    win_view(START_VIEW, START_SORT);
+    G.g_iview = START_VIEW;
+    G.g_isort = START_SORT;
+#if CONF_WITH_SIZE_TO_FIT
+    G.g_ifit = TRUE;
+#endif
+
+    win_view();         /* uses G.g_iview */
     obj_init();         /* must be called *after* win_view(), because it uses */
                         /*  G.g_iwspc/G.g_ihspc which are set by win_view()   */
 
     G.g_wdesktop.w_flags = WN_DESKTOP;  /* mark as special pseudo-window */
 
-    windows = dos_alloc_anyram(NUM_WNODES*sizeof(WNODE));
-    if (!windows)
+    G.g_wfirst = G.g_wlist = dos_alloc_anyram(NUM_WNODES*sizeof(WNODE));
+    if (!G.g_wlist)
         return -1;
 
-    for (i = 0, G.g_wfirst = pw = windows; i < NUM_WNODES; i++, pw++)
+    for (i = 0, pw = G.g_wlist; i < NUM_WNODES; i++, pw++)
     {
         pw->w_next = pw + 1;
         pw->w_id = 0;
@@ -157,19 +163,21 @@ WNODE *win_alloc(WORD obid)
     if (G.g_wcnt == NUM_WNODES)
         return ((WNODE *) NULL);
 
-    pt = (GRECT *) &G.g_cnxsave.cs_wnode[G.g_wcnt].x_save;
+    pt = (GRECT *) &G.g_cnxsave->cs_wnode[G.g_wcnt].x_save;
 
     wob = obj_walloc(pt->g_x, pt->g_y, pt->g_w, pt->g_h);
     if (wob)
     {
         G.g_wcnt++;
-        pw = &windows[wob-2];
+        pw = &G.g_wlist[wob-2];
         pw->w_flags = 0x0;
         pw->w_obid = obid;    /* if -ve, the complement of the drive letter */
         pw->w_root = wob;
+        pw->w_cvcol = 0;
         pw->w_cvrow = 0x0;
         pw->w_pncol = (pt->g_w  - gl_wchar) / G.g_iwspc;
         pw->w_pnrow = (pt->g_h - gl_hchar) / G.g_ihspc;
+        pw->w_vncol = 0;
         pw->w_vnrow = 0x0;
         pw->w_id = wind_create(WINDOW_STYLE, G.g_xdesk, G.g_ydesk,
                                  G.g_wdesk, G.g_hdesk);
@@ -234,6 +242,23 @@ void win_top(WNODE *thewin)
 }
 
 
+#if CONF_WITH_BOTTOMTOTOP
+/*
+ *  Find the WNODE for the bottom window; if none, return NULL
+ */
+WNODE *win_onbottom(void)
+{
+    WNODE *p, *last = NULL;
+
+    for (p = G.g_wfirst; p; p = p->w_next)
+        if (p->w_id)
+            last = p;
+
+    return last;
+}
+#endif
+
+
 /*
  *  Find out if the window node on top has size; if it does, then it
  *  is the currently active window.  If not, then no window is on
@@ -245,15 +270,27 @@ WNODE *win_ontop(void)
 
     wob = G.g_screen[ROOT].ob_tail;
     if (G.g_screen[wob].ob_width && G.g_screen[wob].ob_height)
-        return &windows[wob-2];
+        return &G.g_wlist[wob-2];
     else
         return NULL;
 }
 
 
 /*
+ *  Return count of open windows
+ */
+WORD win_count(void)
+{
+    return G.g_wcnt;
+}
+
+
+/*
  *  Calculate a bunch of parameters related to how many file objects
  *  will fit in a window
+ *
+ *  wfit/hfit are the number of items that will fit in the current window,
+ *  horizontally (wfit) and vertically (hfit)
  */
 static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
 {
@@ -276,22 +313,60 @@ static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
         cnt++;
     }
 
-    /* set windows virtual number of rows */
+    /*
+     * set window's virtual number of rows and columns: this is the number
+     * of rows and columns that would be needed to display all the files.
+     * if size-to-fit, this uses the current window width; otherwise it
+     * assumes a maximum-width window for the current resolution.
+     */
+#if CONF_WITH_SIZE_TO_FIT
+    if (G.g_ifit)
+    {
+        pwin->w_vncol = wfit;
+        pwin->w_vnrow = (cnt + wfit - 1) / wfit;
+    }
+    else
+    {
+        pwin->w_vncol = min(cnt, G.g_icols);
+        pwin->w_vnrow = (cnt + G.g_icols - 1) / G.g_icols;
+    }
+    if (pwin->w_vncol < 1)
+        pwin->w_vncol = 1;
+#else
     pwin->w_vnrow = (cnt + wfit - 1) / wfit;
+#endif
     if (pwin->w_vnrow < 1)
         pwin->w_vnrow = 1;
 
-    /* backup cvrow & cvcol to account for more space in wind.*/
+    /*
+     * set window's physical number of rows and columns: this is the number
+     * of rows and columns that can be displayed in the current window.
+     */
     pwin->w_pncol = wfit;
-    w_space = pwin->w_pnrow = min(hfit, pwin->w_vnrow);
+    pwin->w_pnrow = min(hfit, pwin->w_vnrow);
+
+    /*
+     * adjust the window's current virtual row and column numbers in
+     * case we have expanded the window
+     */
+#if CONF_WITH_SIZE_TO_FIT
+    w_space = min(wfit, pwin->w_vncol);
+    while((pwin->w_vncol - pwin->w_cvcol) < w_space)
+        pwin->w_cvcol--;
+#endif
+    w_space = min(hfit, pwin->w_vnrow);
     while((pwin->w_vnrow - pwin->w_cvrow) < w_space)
         pwin->w_cvrow--;
 
     /*
      * based on the window's current virtual upper left row
-     * & column, calculate the start and stop files
+     * & column, calculate the start file
      */
+#if CONF_WITH_SIZE_TO_FIT
+    start = pwin->w_cvrow * pwin->w_vncol + pwin->w_cvcol;
+#else
     start = pwin->w_cvrow * pwin->w_pncol;
+#endif
     pf = pwin->w_pnode.p_flist;
     while (start-- && pf)
         pf = pf->f_next;
@@ -306,7 +381,7 @@ static void win_ocalc(WNODE *pwin, WORD wfit, WORD hfit, FNODE **ppstart)
  */
 static void win_icalc(FNODE *pfnode, WNODE *pwin)
 {
-    pfnode->f_pa = app_afind_by_name((pfnode->f_attr&F_SUBDIR) ? AT_ISFOLD : AT_ISFILE,
+    pfnode->f_pa = app_afind_by_name((pfnode->f_attr&FA_SUBDIR) ? AT_ISFOLD : AT_ISFILE,
                         AF_ISDESK, pwin->w_pnode.p_spec, pfnode->f_name, &pfnode->f_isap);
 }
 
@@ -320,18 +395,24 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
 {
     FNODE *pstart;
     ANODE *anode;
-    WORD  obid;
+    WORD  obid, skipcnt;
     WORD  r_cnt, c_cnt;
     WORD  o_wfit, o_hfit;       /* object grid */
     WORD  i_index;
     WORD  xoff, yoff, wh, sl_size, sl_value;
+
+    MAYBE_UNUSED(skipcnt);
 
     /* free all this window's kids and set size */
     obj_wfree(pwin->w_root, x, y, w, h);
 
     /* make pstart point at 1st file in current view */
     win_ocalc(pwin, w/G.g_iwspc, h/G.g_ihspc, &pstart);
+#if CONF_WITH_SIZE_TO_FIT
+    o_wfit = min(pwin->w_pncol + 1, pwin->w_vncol - pwin->w_cvcol);
+#else
     o_wfit = pwin->w_pncol;
+#endif
     o_hfit = min(pwin->w_pnrow + 1, pwin->w_vnrow - pwin->w_cvrow);
     r_cnt = c_cnt = 0;
     while ((c_cnt < o_wfit) && (r_cnt < o_hfit) && pstart)
@@ -385,7 +466,7 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
             else
             {
                 KDEBUG(("win_bldview(): NULL anode, using defaults\n"));
-                if (pstart->f_attr&F_SUBDIR)
+                if (pstart->f_attr&FA_SUBDIR)
                     i_index = IG_FOLDER;
                 else
                     i_index = (pstart->f_isap) ? IG_APPL : IG_DOCU;
@@ -405,15 +486,31 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
             /* next row so skip next file in virt grid */
             r_cnt++;
             c_cnt = 0;
+#if CONF_WITH_SIZE_TO_FIT
+            skipcnt = pwin->w_vncol - o_wfit;
+            while(skipcnt-- && pstart)
+                pstart = pstart->f_next;
+#endif
         }
     }
 
     /* set slider size & position */
     wh = pwin->w_id;
+
+#if CONF_WITH_SIZE_TO_FIT
+    sl_size = mul_div(pwin->w_pncol, 1000, pwin->w_vncol);
+    wind_set(wh, WF_HSLSIZ, sl_size, 0, 0, 0);
+    if (pwin->w_vncol > pwin->w_pncol)
+        sl_value = mul_div(pwin->w_cvcol, 1000, pwin->w_vncol-pwin->w_pncol);
+    else
+        sl_value = 0;
+    wind_set(wh, WF_HSLIDE, sl_value, 0, 0, 0);
+#else
     wind_set(wh, WF_HSLSIZ, 1000, 0, 0, 0);
+#endif
+
     sl_size = mul_div(pwin->w_pnrow, 1000, pwin->w_vnrow);
     wind_set(wh, WF_VSLSIZ, sl_size, 0, 0, 0);
-
     if (pwin->w_vnrow > pwin->w_pnrow)
         sl_value = mul_div(pwin->w_cvrow, 1000, pwin->w_vnrow-pwin->w_pnrow);
     else
@@ -423,21 +520,55 @@ void win_bldview(WNODE *pwin, WORD x, WORD y, WORD w, WORD h)
 
 
 /*
- *  Routine to blt the contents of a window based on a new current row
+ *  Calculate the change in virtual row/column number required to
+ *  display a new virtual row/column number, allowing for the
+ *  height/width of the window
  */
-static void win_blt(WNODE *pw, WORD newcv)
+static WORD win_delta(WNODE *pw, BOOL horizontal, WORD newcv)
 {
-    WORD  delcv, pn;
+    WORD delta;
+
+    newcv = max(0, newcv);
+
+#if CONF_WITH_SIZE_TO_FIT
+    if (horizontal)
+    {
+        delta = min(pw->w_vncol - pw->w_pncol, newcv) - pw->w_cvcol;
+    }
+    else
+#endif
+    {
+        delta = min(pw->w_vnrow - pw->w_pnrow, newcv) - pw->w_cvrow;
+    }
+
+    return delta;
+}
+
+
+/*
+ *  Routine to blt the contents of a window based on a new current row
+ *  or column
+ */
+static void win_blt(WNODE *pw, BOOL horizontal, WORD newcv)
+{
+    WORD  delcv;
     WORD  sx, sy, dx, dy, wblt, hblt, revblt, tmp;
     GRECT c, t;
 
-    newcv = max(0, newcv);
-    newcv = min(pw->w_vnrow - pw->w_pnrow, newcv);
-    pn = pw->w_pnrow;
-    delcv = newcv - pw->w_cvrow;
-    pw->w_cvrow += delcv;
+    delcv = win_delta(pw, horizontal, newcv);
     if (!delcv)
         return;
+
+#if CONF_WITH_SIZE_TO_FIT
+    if (horizontal)
+    {
+        pw->w_cvcol += delcv;
+    }
+    else
+#endif
+    {
+        pw->w_cvrow += delcv;
+    }
 
     wind_get_grect(pw->w_id, WF_WXYWH, &c);
     win_bldview(pw, c.g_x, c.g_y, c.g_w, c.g_h);
@@ -449,14 +580,27 @@ static void win_blt(WNODE *pw, WORD newcv)
         /* blt as much as we can, adjust clip & draw the rest */
         if ((revblt = (delcv < 0)) != 0)
             delcv = -delcv;
-        if (pn > delcv)
+        if (pw->w_pnrow > delcv)
         {
             /* see how much there is, pretend blt up */
-            sx = dx = 0;
-            sy = delcv * G.g_ihspc;
-            dy = 0;
-            wblt = c.g_w;
-            hblt = c.g_h - sy;
+#if CONF_WITH_SIZE_TO_FIT
+            if (horizontal)
+            {
+                sy = dy = 0;
+                sx = delcv * G.g_iwspc;
+                dx = 0;
+                wblt = c.g_w - sx;
+                hblt = c.g_h;
+            }
+            else
+#endif
+            {
+                sx = dx = 0;
+                sy = delcv * G.g_ihspc;
+                dy = 0;
+                wblt = c.g_w;
+                hblt = c.g_h - sy;
+            }
             if (revblt)
             {
                 tmp = sx;
@@ -469,10 +613,20 @@ static void win_blt(WNODE *pw, WORD newcv)
             gsx_sclip(&c);
             bb_screen(S_ONLY, sx+c.g_x, sy+c.g_y, dx+c.g_x, dy+c.g_y,
                         wblt, hblt);
-
-            if (!revblt)
-                c.g_y += hblt;
-            c.g_h -= hblt;
+#if CONF_WITH_SIZE_TO_FIT
+            if (horizontal)
+            {
+                if (!revblt)
+                    c.g_x += wblt;
+                c.g_w -= wblt;
+            }
+            else
+#endif
+            {
+                if (!revblt)
+                    c.g_y += hblt;
+                c.g_h -= hblt;
+            }
         }
     }
 
@@ -480,11 +634,50 @@ static void win_blt(WNODE *pw, WORD newcv)
 }
 
 
+#if CONF_WITH_SEARCH
 /*
- *  Routine to change the current virtual row being viewed
+ *  Routine to update the window display so that it shows the
+ *  specified file number (numbered sequentially from 0, in the
+ *  current display sequence)
+ */
+void win_dispfile(WNODE *pw, WORD file)
+{
+    GRECT gr;
+    WORD col, delcv;
+
+    /*
+     * adjust starting row of display
+     */
+#if CONF_WITH_SIZE_TO_FIT
+    col = G.g_ifit ? pw->w_pncol : pw->w_vncol;
+#else
+    col = pw->w_pncol;
+#endif
+    delcv = win_delta(pw, TRUE, file/col);
+    pw->w_cvrow += delcv;
+
+    /*
+     * adjust starting column of display to be as far left as possible,
+     * while still displaying the item
+     */
+#if CONF_WITH_SIZE_TO_FIT
+    pw->w_cvcol = max(0, file%col - pw->w_pncol + 1);
+#else
+    pw->w_cvcol = 0;
+#endif
+
+    wind_get_grect(pw->w_id, WF_WXYWH, &gr);
+    win_bldview(pw, gr.g_x, gr.g_y, gr.g_w, gr.g_h);
+    do_wredraw(pw->w_id, &gr);
+}
+#endif
+
+
+/*
+ *  Routine to change the current virtual row or column being viewed
  *  in the upper left corner based on a new slide amount
  */
-void win_slide(WORD wh, WORD sl_value)
+void win_slide(WORD wh, BOOL horizontal, WORD sl_value)
 {
     WNODE *pw;
     WORD  newcv;
@@ -494,23 +687,35 @@ void win_slide(WORD wh, WORD sl_value)
     if (!pw)
         return;
 
-    vn = pw->w_vnrow;
-    pn = pw->w_pnrow;
-    sls = WF_VSLSIZ;
+#if CONF_WITH_SIZE_TO_FIT
+    if (horizontal)
+    {
+        vn = pw->w_vncol;
+        pn = pw->w_pncol;
+        sls = WF_HSLSIZ;
+    }
+    else
+#endif
+    {
+        vn = pw->w_vnrow;
+        pn = pw->w_pnrow;
+        sls = WF_VSLSIZ;
+    }
     wind_get(wh, sls, &sl_size, &i, &i, &i);
     newcv = mul_div(sl_value, vn - pn, 1000);
-    win_blt(pw, newcv);
+    win_blt(pw, horizontal, newcv);
 }
 
 
 /*
- *  Routine to change the current virtual row being viewed
+ *  Routine to change the current virtual row or column being viewed
  *  in the upper left corner based on a new slide amount.
  */
 void win_arrow(WORD wh, WORD arrow_type)
 {
     WNODE *pw;
     WORD  newcv;
+    BOOL  horizontal = FALSE;
 
     pw = win_find(wh);
     if (!pw)
@@ -530,10 +735,28 @@ void win_arrow(WORD wh, WORD arrow_type)
     case WA_DNLINE:
         newcv = pw->w_cvrow + 1;
         break;
+#if CONF_WITH_SIZE_TO_FIT
+    case WA_LFPAGE:
+        newcv = pw->w_cvcol - pw->w_pncol;
+        horizontal = TRUE;
+        break;
+    case WA_RTPAGE:
+        newcv = pw->w_cvcol + pw->w_pncol;
+        horizontal = TRUE;
+        break;
+    case WA_LFLINE:
+        newcv = pw->w_cvcol - 1;
+        horizontal = TRUE;
+        break;
+    case WA_RTLINE:
+        newcv = pw->w_cvcol + 1;
+        horizontal = TRUE;
+        break;
+#endif
     default:
         return;     /* ignore WA_LFPAGE, WA_RTPAGE, WA_LFLINE, WA_RTLINE */
     }
-    win_blt(pw, newcv);
+    win_blt(pw, horizontal, newcv);
 }
 
 
@@ -643,6 +866,7 @@ void win_sinfo(WNODE *pwin, BOOL check_selected)
 {
     PNODE *pn;
     FNODE *fn;
+    char *alert;
     WORD i, select_count = 0;
     LONG select_size = 0L;
 
@@ -666,16 +890,15 @@ void win_sinfo(WNODE *pwin, BOOL check_selected)
      */
     if (select_count)
     {
-        rsrc_gaddr_rom(R_STRING, STINFST2, (void **)&G.a_alert);
+        alert = desktop_str_addr(STINFST2);
     }
     else
     {
-        rsrc_gaddr_rom(R_STRING, STINFOST, (void **)&G.a_alert);
+        alert = desktop_str_addr(STINFOST);
         select_count = pn->p_count;     /* so we can use common code below */
         select_size = pn->p_size;
     }
 
-    strlencpy(G.g_1text, G.a_alert);
-    sprintf(pwin->w_info, G.g_1text, select_size, select_count);
+    sprintf(pwin->w_info, alert, select_size, select_count);
     wind_set(pwin->w_id, WF_INFO, pwin->w_info, 0, 0);
 }

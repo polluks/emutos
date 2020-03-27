@@ -24,7 +24,7 @@ msgstr "GEMDOS-Laufwerke"
 msgid "MB"
 msgstr "MB"
 
-#: bios/initinfo.c
+#: bios/initinfo.c desk/deskinf.c
 msgid "KB"
 msgstr "KB"
 
@@ -227,16 +227,16 @@ msgstr "[3]["
 "Nummer #%d.][Abbruch]"
 
 #: aes/gem_rsc.c
-msgid "ITEM SELECTOR"
-msgstr "AUSWAHL"
-
-#: aes/gem_rsc.c
 msgid "[1]["
 "Not enough memory for|"
 "this directory][  OK  ]"
 msgstr "[1]["
 "Nicht genug Speicher für|"
 "dieses Verzeichnis][  OK  ]"
+
+#: aes/gem_rsc.c
+msgid "ITEM SELECTOR"
+msgstr "AUSWAHL"
 
 #: desk/desk_rsc.c
 msgid "Number of folders: _____"
@@ -331,6 +331,10 @@ msgid "Copy's name: ________.___"
 msgstr "Name der Kopie: ________.___"
 
 #: desk/desk_rsc.c
+msgid "Free memory: ___________________"
+msgstr "Freier Speicher: ___________________"
+
+#: desk/desk_rsc.c
 msgid "Label: ________.___"
 msgstr "Name: ________.___"
 
@@ -355,44 +359,44 @@ msgid "  Desktop info..."
 msgstr "  Desktop-Info..."
 
 #: desk/desk_rsc.c
-msgid "  Open            ^O"
-msgstr "  Öffnen           ^O"
+msgid "  Open"
+msgstr "  Öffnen"
 
 #: desk/desk_rsc.c
-msgid "  Info/Rename...  ^I"
-msgstr "  Info/Ändern...   ^I"
+msgid "  Info/Rename..."
+msgstr "  Info/Ändern..."
 
 #: desk/desk_rsc.c
-msgid "  New Folder...   ^N"
-msgstr "  Neuer Ordner...  ^N"
+msgid "  New folder..."
+msgstr "  Neuer Ordner..."
 
 #: desk/desk_rsc.c
-msgid "  Close           ^U"
-msgstr "  Schließe         ^U"
+msgid "  Close"
+msgstr "  Schließe"
 
 #: desk/desk_rsc.c
-msgid "  Close window    ^W"
-msgstr "  Schließe Fenster ^W"
+msgid "  Close window"
+msgstr "  Schließe Fenster"
 
 #: desk/desk_rsc.c
 msgid "  Set file mask..."
 msgstr "  Dateimaske..."
 
 #: desk/desk_rsc.c
-msgid "  Delete...       ^D"
-msgstr "  Löschen...       ^D"
+msgid "  Delete..."
+msgstr "  Löschen..."
 
 #: desk/desk_rsc.c
 msgid "  Format..."
 msgstr "  Formatieren..."
 
 #: desk/desk_rsc.c
-msgid "  Execute EmuCON  ^Z"
-msgstr "  Starte EmuCON    ^Z"
+msgid "  Execute EmuCON"
+msgstr "  Starte EmuCON"
 
 #: desk/desk_rsc.c
-msgid "  Shutdown        ^Q"
-msgstr "  Stoppe System    ^Q"
+msgid "  Shutdown"
+msgstr "  Stoppe System"
 
 #: desk/desk_rsc.c
 msgid "  Show as icons"
@@ -451,20 +455,20 @@ msgid "  Desktop configuration..."
 msgstr "  Desktop einstellen..."
 
 #: desk/desk_rsc.c
-msgid "  Change resolution...  ^R"
-msgstr "  Auflösung wechseln... ^R"
+msgid "  Change resolution..."
+msgstr "  Auflösung wechseln..."
 
 #: desk/desk_rsc.c
-msgid "  Save desktop...       ^S"
-msgstr "  Desktop sichern...    ^S"
+msgid "  Read .INF file..."
+msgstr "  .INF-Datei lesen..."
+
+#: desk/desk_rsc.c
+msgid "  Save desktop..."
+msgstr "  Desktop sichern..."
 
 #: desk/desk_rsc.c
 msgid "  Blitter"
 msgstr "  Blitter"
-
-#: desk/desk_rsc.c
-msgid "Attribute:"
-msgstr "Attribut:"
 
 #: desk/desk_rsc.c
 msgid "Read/Write"
@@ -603,6 +607,10 @@ msgid "NEW FOLDER"
 msgstr "NEUER ORDNER"
 
 #: desk/desk_rsc.c
+msgid "PRINT FILE"
+msgstr "DATEI DRUCKEN"
+
+#: desk/desk_rsc.c
 msgid "SET PREFERENCES"
 msgstr "VOREINSTELLUNGEN"
 
@@ -693,6 +701,10 @@ msgstr "Standardverzeichnis:"
 #: desk/desk_rsc.c
 msgid "Input parameter:"
 msgstr "Eingabeparameter:"
+
+#: desk/desk_rsc.c
+msgid "Function keys:"
+msgstr "Funktionstasten:"
 
 #: desk/desk_rsc.c
 msgid "SET SCREEN RESOLUTION"
@@ -791,6 +803,10 @@ msgid "%ld bytes used in %d items."
 msgstr "%ld Bytes in %d Dateien."
 
 #: desk/desk_rsc.c
+msgid "%ld bytes used in %d selected items."
+msgstr "%ld Bytes belegt von %d ausgewählten Objekten"
+
+#: desk/desk_rsc.c
 msgid "FILE INFORMATION"
 msgstr "DATEI INFORMATION"
 
@@ -819,6 +835,10 @@ msgid "TRASH"
 msgstr "PAPIERKORB"
 
 #: desk/desk_rsc.c
+msgid "PRINTER"
+msgstr "DRUCKER"
+
+#: desk/desk_rsc.c
 msgid "-More-"
 msgstr "-Mehr-"
 
@@ -835,6 +855,10 @@ msgid "Locate item"
 msgstr "Objekt lokalisieren"
 
 #: desk/desk_rsc.c
+msgid "Select .INF file"
+msgstr ".INF-Datei auswählen"
+
+#: desk/desk_rsc.c
 msgid "[2]["
 "Switch resolution?][ Yes | No ]"
 msgstr "[2]["
@@ -842,9 +866,15 @@ msgstr "[2]["
 
 #: desk/desk_rsc.c
 msgid "[2]["
-"Show this document?][Show|Cancel]"
+"Show or print this document?][Show|Print|Cancel]"
 msgstr "[2]["
-"Dokument anzeigen?][Anzeigen|Abbruch]"
+"Dokument anzeigen oder drucken?][Anzeigen|Drucken|Abbruch]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Print error!][ Retry | Cancel ]"
+msgstr "[1]["
+"Fehler beim Drucken!][ Nochmal | Abbruch ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -865,6 +895,18 @@ msgstr "[1]["
 "Fenster mehr verfügbar. Bitte|"
 "ein offenes Fenster schließen,|"
 "das nicht genutzt wird.][  OK  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Illegal directory operation!][ Skip | Abort ]"
+msgstr "[1]["
+"Illegale Ordneroperation!][Auslassen| Abbruch ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Illegal operation!][  OK  ]"
+msgstr "[1]["
+"Illegale Operation!][  OK  ]"
 
 #: desk/desk_rsc.c
 msgid "[2]["
@@ -900,7 +942,7 @@ msgstr "[2]["
 "Ein Ordner mit diesem Namen|"
 "kann nicht angelegt werden.|"
 "Bitte anderen Namen wählen|"
-"oder Vorgang abbrechen.][Abbrechen|Nochmal]"
+"oder Vorgang abbrechen.][Abbruch|Nochmal]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -943,6 +985,14 @@ msgstr "[1]["
 "In %s können Dateien|"
 "verschoben werden, um sie|"
 "endgültig zu löschen.][  OK  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"%s|"
+"is a printer.][  OK  ]"
+msgstr "[1]["
+"%s|"
+"ist ein Drucker.][  OK  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1023,8 +1073,8 @@ msgid "[3]["
 "or unusable.][ Retry | Abort ]"
 msgstr "[3]["
 "Formatierungsfehler. Eventuell|"
-"ist die Diskette schreibgeschützt|"
-"oder nicht mehr benutzbar.][ Nochmal | Abbruch ]"
+"ist die Diskette unbenutzbar|"
+"oder schreibgeschützt.][ Nochmal | Abbruch ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1034,22 +1084,6 @@ msgstr "[1]["
 "Diese Diskette hat|"
 "%ld Bytes zur|"
 "Benutzung verfügbar.][ Weiter | Beenden ]"
-
-#: desk/desk_rsc.c
-msgid "%ld bytes used in %d selected items."
-msgstr "%ld Bytes belegt von %d ausgewählten Objekten"
-
-#: desk/desk_rsc.c
-msgid "[1]["
-"Illegal directory operation!][ Skip | Abort ]"
-msgstr "[1]["
-"Illegale Ordneroperation!][Auslassen| Abbrechen ]"
-
-#: desk/desk_rsc.c
-msgid "[1]["
-"Illegal operation!][  OK  ]"
-msgstr "[1]["
-"Illegale Operation!][  OK  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1113,7 +1147,7 @@ msgid "[1]["
 "%s][ Skip | Abort ]"
 msgstr "[1]["
 "Kann Datei %s|"
-"nicht lesen][Auslassen| Abbruch]]"
+"nicht lesen][Auslassen| Abbruch ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1121,13 +1155,13 @@ msgid "[1]["
 "%s][ Skip | Abort ]"
 msgstr "[1]["
 "Kann Datei %s|"
-"nicht schreiben][Auslassen| Abbruch]]"
+"nicht schreiben][Auslassen| Abbruch ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
 "Rename error!][ Retry | Cancel ]"
 msgstr "[1]["
-"Fehler beim Umbenennen!][ Nochmal ][ Abbruch ]"
+"Fehler beim Umbenennen!][ Nochmal | Abbruch ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1136,6 +1170,12 @@ msgid "[1]["
 msgstr "[1]["
 "Kann Standardverzeichnis|"
 "nicht setzen][  OK  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Illegal .INF file format.][  OK  ]"
+msgstr "[1]["
+"Falsches Format der .INF-Datei.][  OK  ]"
 
 #: cli/cmdint.c
 msgid "Copy <filespec> ... to standard output"
@@ -1290,8 +1330,8 @@ msgid "left/right arrow = previous/next character"
 msgstr "Pfeil links/rechts = vorhergehendes/nächstes Zeichen"
 
 #: cli/cmdint.c
-msgid "shift-left/right arrow = previous/next word"
-msgstr "Umschalt-Pfeil links/rechts = vorhergehendes/nächstes Wort"
+msgid "control-left/right arrow = previous/next word"
+msgstr "Strg-Pfeil links/rechts = vorherigesgehendes/nächstes Wort"
 
 #: cli/cmdint.c
 msgid "invalid mode argument"

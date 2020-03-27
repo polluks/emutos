@@ -2,7 +2,7 @@
  *  mfp.h - header file for MFP defines
  *
  * Copyright (C) 2001 Martin Doering
- * Copyright (C) 2001-2016 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -14,8 +14,6 @@
 
 #ifndef MFP_H
 #define MFP_H
-
-#include "portab.h"
 
 #define CLOCKS_PER_SEC  200UL
 

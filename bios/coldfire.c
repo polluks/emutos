@@ -1,7 +1,7 @@
 /*
  * coldfire.c - ColdFire specific functions
  *
- * Copyright (C) 2013-2016 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -17,14 +17,11 @@
 /* #define ENABLE_KDEBUG */
 #define DEBUG_FLEXCAN 0
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "coldfire.h"
 #include "coldpriv.h"
-#include "tosvars.h"
 #include "ikbd.h"
 #include "string.h"
-#include "kprint.h"
 #include "delay.h"
 #include "asm.h"
 
@@ -438,7 +435,7 @@ void coldfire_flexcan_message_buffer_interrupt(void)
 
         /* Unlock the message buffer.
          * This is achieved by reading the free-running timer. */
-        UNUSED(MCF_CAN_TIMER1);
+        FORCE_READ(MCF_CAN_TIMER1);
 
         /* Clear the interrupt */
         MCF_CAN_IFLAG1 = MCF_CAN_IFLAG_BUF15I;

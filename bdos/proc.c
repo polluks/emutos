@@ -2,7 +2,7 @@
  * proc.c - process management routines
  *
  * Copyright (C) 2001 Lineo, Inc. and Authors:
- *               2002-2017 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  *  KTB     Karl T. Braun (kral)
  *  MAD     Martin Doering
@@ -15,18 +15,18 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "bdosdefs.h"
 #include "fs.h"
 #include "mem.h"
 #include "proc.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
-#include "kprint.h"
 #include "biosext.h"
 #include "asm.h"
-#include "../bios/tosvars.h"
+#include "tosvars.h"
+#include "has.h"
 
 
 /*
@@ -139,7 +139,7 @@ static void ixterm(PD *r)
 
     free_all_owned(r, &pmd);
 #if CONF_WITH_ALT_RAM
-    if(has_alt_ram)
+    if (has_alt_ram)
         free_all_owned(r, &pmdalt);
 #endif
 }
@@ -213,7 +213,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
 #endif
     case PE_BASEPAGE:           /* just create a basepage */
         path = (char *) 0L;     /* (same as basepage+flags with flags set to zero) */
-        /* drop thru */
+        FALLTHROUGH;
     case PE_BASEPAGEFLAGS:      /* create a basepage, respecting the flags */
         hdrflags = (ULONG)path;
         env_ptr = alloc_env(hdrflags, env);
@@ -244,7 +244,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
         p = (PD *) tail;
         set_owner(p, p);
         set_owner(p->p_env, p);
-        /* fall through */
+        FALLTHROUGH;
     case PE_GO:
         p = (PD *) tail;
         proc_go(p);
@@ -345,7 +345,7 @@ long xexec(WORD flag, char *path, char *tail, char *env)
      * programs that jump into their DATA, BSS or HEAP are kindly invited
      * to do their cache management themselves.
      */
-    invalidate_instruction_cache(((char *)cur_p) + sizeof(PD), hdr.h01_tlen);
+    invalidate_instruction_cache(((UBYTE *)cur_p) + sizeof(PD), hdr.h01_tlen);
 
     if (flag != PE_LOAD)
         proc_go(cur_p);
@@ -362,8 +362,8 @@ static void init_pd_fields(PD *p, char *tail, long max, char *envptr)
     bzero(p, sizeof(PD)) ;
 
     /* memory values */
-    p->p_lowtpa = (char *)p;               /*  M01.01.06   */
-    p->p_hitpa  = (char *)p  +  max;       /*  M01.01.06   */
+    p->p_lowtpa = (UBYTE *)p;              /*  M01.01.06   */
+    p->p_hitpa  = (UBYTE *)p  +  max;      /*  M01.01.06   */
     p->p_xdta = (DTA *) p->p_cmdlin;       /* default p_xdta is p_cmdlin */
     p->p_env = envptr;
 

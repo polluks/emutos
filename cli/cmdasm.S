@@ -1,7 +1,7 @@
 /*
  * EmuCON2 assembler routines
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -95,7 +95,6 @@ _jmp_xbios:
         move.l  save_d2,d2
         move.l  ret_addr,-(sp)
         rts
-
 
         .bss
 ret_addr:

@@ -4,7 +4,7 @@
  * This file was created to support desktop resolution changes
  * for the TT and Falcon.
  *
- * Copyright (C) 2012-2017 The EmuTOS development team
+ * Copyright (C) 2012-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -15,11 +15,8 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-
+#include "emutos.h"
 #include "aesbind.h"
-#include "gembind.h"
 #include "obdefs.h"
 #include "optimize.h"
 
@@ -35,11 +32,9 @@
 #include "deskrez.h"
 
 #include "xbiosbind.h"
-#include "../bios/machine.h"    /* for has_videl etc */
-#include "../bios/screen.h"
-#include "../bios/videl.h"
-#include "../bios/amiga.h"
-#include "kprint.h"
+#include "has.h"                /* for has_videl etc */
+#include "biosdefs.h"
+#include "biosext.h"
 
 
 #if CONF_WITH_TT_SHIFTER
@@ -118,7 +113,7 @@ WORD oldres;
     selected = i;
 
     /* set up dialog & display */
-    tree = G.a_trees[ADTTREZ];
+    tree = desk_rs_trees[ADTTREZ];
     for (i = 0, obj = tree+TTREZSTL; i < NUM_TT_BUTTONS; i++, obj++) {
         if (i == selected)
             obj->ob_state |= SELECTED;
@@ -167,11 +162,11 @@ WORD oldmode, oldbase, oldoptions;
     selected = i;
 
     /* set up dialog & display */
-    tree = G.a_trees[ADFALREZ];
+    tree = desk_rs_trees[ADFALREZ];
 
     if (VgetMonitor() != MON_VGA) { /* fix up rez descriptions if not VGA */
         for (i = 0, obj = tree+FREZNAME; i < 4; i++, obj++)
-            rsrc_gaddr_rom(R_STRING,STREZ1+i,(void **)&obj->ob_spec);
+            obj->ob_spec = (LONG) desktop_str_addr(STREZ1+i);
     }
 
     /* FIXME: change the next 2 lines when we have TrueColor support in VDI */
@@ -244,7 +239,7 @@ WORD oldmode;
     selected = i;
 
     /* set up dialog & display */
-    tree = G.a_trees[ADAMIREZ];
+    tree = desk_rs_trees[ADAMIREZ];
 
     for (i = 0, obj = tree+AMIREZ0; i < NUM_AMIGA_BUTTONS; i++, obj++) {
         if (i == selected)

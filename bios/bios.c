@@ -2,7 +2,7 @@
  *  bios.c - C portion of BIOS initialization and front end
  *
  * Copyright (C) 2001 Lineo, Inc.
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  SCC     Steve C. Cavender
@@ -19,26 +19,23 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "biosext.h"
 #include "bios.h"
-#include "dos.h"
-#include "dta.h"
-#include "pd.h"
+#include "../bdos/bdosstub.h"
+#include "../vdi/vdistub.h"
+#include "bdosbind.h"
 #include "gemerror.h"
-#include "kprint.h"
-#include "tosvars.h"
 #include "lineavars.h"
 #include "vt52.h"
 #include "processor.h"
 #include "initinfo.h"
 #include "machine.h"
+#include "has.h"
 #include "cookie.h"
 #include "country.h"
 #include "nls.h"
 #include "biosmem.h"
-#include "aespub.h"
 #include "ikbd.h"
 #include "mouse.h"
 #include "midi.h"
@@ -60,11 +57,15 @@
 #include "biosbind.h"
 #include "memory.h"
 #include "nova.h"
+#include "tosvars.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
 #ifdef MACHINE_FIREBEE
 #include "coldfire.h"
+#endif
+#if WITH_CLI
+#include "../cli/clistub.h"
 #endif
 
 
@@ -74,37 +75,21 @@
 #define DBGBIOS 0               /* If you want to enable debug wrappers */
 #define ENABLE_RESET_RESIDENT 0 /* enable to run "reset-resident" code (see below) */
 
-#define ENV_SIZE    20          /* sufficient for standard PATH=^X:\^^ (^=nul byte) */
-#define DEF_PATH    "C:\\"      /* default value for path */
-
 /*==== External declarations ==============================================*/
 
 #if STONX_NATIVE_PRINT
-extern void stonx_kprintf_init(void);
+void stonx_kprintf_init(void);      /* defined in kprintasm.S */
 #endif
 
 #if CONF_WITH_CARTRIDGE
-extern void run_cartridge_applications(WORD typebit); /* found in startup.S */
-#endif
-
-#if WITH_CLI
-extern void coma_start(void) NORETURN;  /* found in cli/cmdasm.S */
-#endif
-
-#if CONF_WITH_ALT_RAM
-extern long xmaddalt(UBYTE *start, long size); /* found in bdos/mem.h */
+void run_cartridge_applications(WORD typebit);  /* defined in startup.S */
 #endif
 
 #if CONF_WITH_68040_PMMU
-extern long setup_68040_pmmu(void);
+long setup_68040_pmmu(void);        /* defined in 68040_pmmu.S */
 #endif
 
 /*==== Declarations =======================================================*/
-
-/* Drive specific declarations */
-static WORD defdrv;             /* default drive number (0 is a:, 2 is c:) */
-
-static char default_env[ENV_SIZE];  /* default environment area */
 
 /* used by kprintf() */
 WORD boot_status;               /* see kprint.h for bit flags */
@@ -126,6 +111,26 @@ void (*vector_5ms)(void);       /* 200 Hz system timer */
 
 static void vecs_init(void)
 {
+#if !CONF_ATARI_HARDWARE
+    /* On Atari hardware, the first 2 longs of the address space are physically
+     * routed to the start of the ROM (instead of the start of the ST-RAM).
+     * On other machines, there is actual RAM at that place.
+     * To mimic Atari hardware behaviour, we copy the start of our OS there.
+     * This may improve compatibility with some Atari software,
+     * which may peek the OS version or reset address from there.
+     * As C forbids from dereferencing the NULL pointer, we use assembly. */
+    __asm__ volatile
+    (
+        "move.l  %0,a0\n\t"         /* a0 = ROM */
+        "suba.l  a1,a1\n\t"         /* a1 = 0 */
+        "move.l  (a0)+,(a1)+\n\t"   /* Reset: Initial SSP */
+        "move.l  (a0),(a1)"         /* Reset: Initial PC */
+    : /* outputs */
+    : "g"(&os_header) /* inputs */
+    : "a0", "a1", "cc" AND_MEMORY
+    );
+#endif
+
     /* Initialize the exception vectors.
      * By default, any unexpected exception calls dopanic().
      */
@@ -159,7 +164,7 @@ static void vecs_init(void)
 #endif
 
     /* initialise some vectors we really need */
-    VEC_AES = gemtrap;
+    VEC_GEM = vditrap;
     VEC_BIOS = biostrap;
     VEC_XBIOS = xbiostrap;
     VEC_LINEA = int_linea;
@@ -192,6 +197,7 @@ static void vecs_init(void)
 #endif
 }
 
+extern PFVOID vbl_list[8]; /* Default array for vblqueue */
 
 /*
  * Initialize the BIOS
@@ -213,8 +219,8 @@ static void bios_init(void)
     stonx_kprintf_init();
 #endif
 #if CONF_WITH_UAE
-    KDEBUG(("amiga_uaelib_init()\n"));
-    amiga_uaelib_init();
+    KDEBUG(("amiga_uae_init()\n"));
+    amiga_uae_init();
 #endif
 
     /* Initialize the processor */
@@ -241,14 +247,25 @@ static void bios_init(void)
     KDEBUG(("bmem_init()\n"));
     bmem_init();
 
+#if defined(MACHINE_AMIGA)
+    /* Detect and initialize Zorro II/III expansion boards.
+     * This must be done after is_bus32 and bmem_init().
+     * Alt-RAM found on those boards will be added later in altram_init().
+     */
+    amiga_autoconfig();
+#endif
+
 #if CONF_WITH_68040_PMMU
     /*
-     * Initialize the 68040 MMU
+     * Initialize the 68040 MMU if required
      * Must be done after TT-RAM memory detection (which takes place
      * in machine_detect() above) and memory management initialization.
      */
-    if (mcpu == 40 && setup_68040_pmmu() != 0)
-        panic("setup_68040_pmmu() failed\n");
+    if ((mcpu == 40) && mmu_is_emulated())
+    {
+        if (setup_68040_pmmu() != 0)
+            panic("setup_68040_pmmu() failed\n");
+    }
 #endif /* CONF_WITH_68040_PMMU */
 
     /* Initialize the screen */
@@ -260,6 +277,18 @@ static void bios_init(void)
     KDEBUG(("fill_cookie_jar()\n"));
     fill_cookie_jar();  /* detect hardware features and fill the cookie jar */
 
+#if CONF_WITH_BLITTER
+    /*
+     * If a PAK 68/3 is installed, the blitter cannot access the PAK ROMs.
+     * So we must mark the blitter as not installed (this is what the
+     * patched TOS3.06 ROM on the PAK does).  Since we can't detect a
+     * PAK 68/3 directly, we look for a 68030 on an ST(e)/Mega ST(e).
+     */
+    if ((mcpu == 30)
+     && ((cookie_mch == MCH_ST) || (cookie_mch == MCH_STE) || (cookie_mch == MCH_MSTE)))
+        has_blitter = 0;
+#endif
+
     /* Set up the BIOS console output */
     KDEBUG(("linea_init()\n"));
     linea_init();       /* initialize screen related line-a variables */
@@ -270,21 +299,29 @@ static void bios_init(void)
     /* Now kcprintf() will also send debug info to the screen */
     KDEBUG(("after vt52_init()\n"));
 
+#if DETECT_NATIVE_FEATURES
+    /*
+     * Tell ARAnyM where the LineA variables are
+     */
+    nf_setlinea();
+#endif
+
     /* misc. variables */
     dumpflg = -1;
-    sysbase = (LONG) os_entry;
+    sysbase = &os_header;
     savptr = (LONG) trap_save_area;
-    etv_timer = (void(*)(int)) just_rts;
+    etv_timer = (ETV_TIMER_T) just_rts;
     etv_critic = default_etv_critic;
     etv_term = just_rts;
+    swv_vec = just_rts;
 
-    /* setup VBL queue */
-    nvbls = 8;
+    /* setup default VBL queue with vbl_list[] */
+    nvbls = ARRAY_SIZE(vbl_list);
     vblqueue = vbl_list;
     {
         int i;
-        for(i = 0 ; i < 8 ; i++) {
-            vbl_list[i] = 0;
+        for(i = 0 ; i < nvbls ; i++) {
+            vbl_list[i] = NULL;
         }
     }
 
@@ -385,14 +422,10 @@ static void bios_init(void)
     nls_set_lang(get_lang_name());
 #endif
 
-    /* set start of user interface */
-#if WITH_AES
-    exec_os = ui_start;
-#elif WITH_CLI
-    exec_os = coma_start;
-#else
-    exec_os = NULL;
-#endif
+    /* Set start of user interface.
+     * No need to check if os_header.os_magic->gm_magic == GEM_MUPB_MAGIC,
+     * as this is always true. */
+    exec_os = os_header.os_magic->gm_init;
 
     KDEBUG(("osinit_before_xmaddalt()\n"));
     osinit_before_xmaddalt();   /* initialize BDOS (part 1) */
@@ -410,6 +443,7 @@ static void bios_init(void)
     boot_status |= DOS_AVAILABLE;   /* track progress */
 
     /* Enable VBL processing */
+    swv_vec = os_header.reseth; /* reset system on monitor change & jump to _main */
     vblsem = 1;
 
 #if CONF_WITH_CARTRIDGE
@@ -428,6 +462,7 @@ static void bios_init(void)
         if ((V_REZ_HZ != save_hz) || (V_REZ_VT != save_vt) || (v_planes != save_pl))
         {
             set_rez_hacked();
+            set_screen_shift();     /* set shift amount for screen address calc */
             font_set_default(-1);   /* set default font */
             vt52_init();            /* initialize the vt52 console */
         }
@@ -437,10 +472,10 @@ static void bios_init(void)
     KDEBUG(("bios_init() end\n"));
 }
 
+#if DETECT_NATIVE_FEATURES
 
 static void bootstrap(void)
 {
-#if DETECT_NATIVE_FEATURES
     /* start the kernel provided by the emulator */
     PD *pd;
     LONG length;
@@ -451,7 +486,7 @@ static void bootstrap(void)
     nf_getbootstrap_args(args, sizeof(args));
 
     /* allocate space */
-    pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, args, default_env);
+    pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, args, NULL);
 
     /* get the TOS executable from the emulator */
     length = nf_bootstrap(pd->p_lowtpa + sizeof(PD), pd->p_hitpa - pd->p_lowtpa);
@@ -461,7 +496,7 @@ static void bootstrap(void)
         goto err;
 
     /* relocate the loaded executable */
-    r = trap1_pexec(PE_RELOCATE, (char*)length, pd, "");
+    r = Pexec(PE_RELOCATE, (char *)length, (char *)pd, NULL);
     if (r != (LONG)pd)
         goto err;
 
@@ -469,14 +504,14 @@ static void bootstrap(void)
     bootdev = nf_getbootdrive();
 
     /* execute the relocated process */
-    trap1_pexec(PE_GO, "", pd, "");
+    Pexec(PE_GO, "", (char *)pd, NULL);
 
 err:
-    trap1(0x49, (long)pd->p_env); /* Mfree() the environment */
-    trap1(0x49, (long)pd); /* Mfree() the process area */
-#endif
+    Mfree(pd->p_env); /* Mfree() the environment */
+    Mfree(pd); /* Mfree() the process area */
 }
 
+#endif /* DETECT_NATIVE_FEATURES */
 
 #if ENABLE_RESET_RESIDENT
 /*
@@ -533,7 +568,7 @@ static void run_auto_program(const char* filename)
     strcat(path, filename);
 
     KDEBUG(("Loading %s ...\n", path));
-    trap1_pexec(PE_LOADGO, path, "", default_env);  /* Pexec */
+    Pexec(PE_LOADGO, path, "", NULL);
     KDEBUG(("[OK]\n"));
 }
 
@@ -546,13 +581,15 @@ static void autoexec(void)
     if (bootflags & BOOTFLAG_SKIP_AUTO_ACC)
         return;
 
+#if DETECT_NATIVE_FEATURES
     bootstrap();                        /* try to boot the new OS kernel directly */
+#endif
 
     if(!blkdev_avail(bootdev))          /* check, if bootdev available */
         return;
 
-    trap1(0x1a, &dta);                      /* Setdta */
-    err = trap1(0x4e, "\\AUTO\\*.PRG", 7);  /* Fsfirst */
+    Fsetdta(&dta);
+    err = Fsfirst("\\AUTO\\*.PRG", 7);
     while(err == 0) {
 #ifdef TARGET_PRG
         if (!strncmp(dta.d_fname, "EMUTOS", 6))
@@ -566,10 +603,10 @@ static void autoexec(void)
 
             /* Setdta. BetaDOS corrupted the AUTO load if the Setdta
              * not repeated here */
-            trap1(0x1a, &dta);
+            Fsetdta(&dta);
         }
 
-        err = trap1(0x4f);                  /* Fsnext */
+        err = Fsnext();
     }
 }
 
@@ -618,7 +655,6 @@ BOOL can_shutdown(void)
 void biosmain(void)
 {
     BOOL show_initinfo;         /* TRUE if welcome screen must be displayed */
-    char *p;
     ULONG shiftbits;
 
     bios_init();                /* Initialize the BIOS */
@@ -662,29 +698,19 @@ void biosmain(void)
     /* boot eventually from a block device (floppy or harddisk) */
     blkdev_boot();
 
-    defdrv = bootdev;
-    trap1(0x0e, defdrv);        /* Set boot drive: Dsetdrv(defdrv) */
+    Dsetdrv(bootdev);           /* Set boot drive */
+    osinit_environment();       /* Build default environment variables */
 
 #if ENABLE_RESET_RESIDENT
     run_reset_resident();       /* see comments above */
 #endif
 
-    /*
-     * build default environment, just a PATH= string
-     */
-    strcpy(default_env,PATH_ENV);
-    p = default_env + sizeof(PATH_ENV); /* point to first byte of path string */
-    strcpy(p,DEF_PATH);
-    *p = 'A' + defdrv;                  /* fix up drive letter */
-    p += sizeof(DEF_PATH);
-    *p = '\0';                          /* terminate with double nul */
-
 #if WITH_CLI
     if (bootflags & BOOTFLAG_EARLY_CLI) {   /* run an early console */
-        PD *pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
-        pd->p_tbase = (char *) coma_start;
+        PD *pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
+        pd->p_tbase = (UBYTE *) coma_start;
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
-        trap1_pexec(PE_GOTHENFREE, "", pd, "");
+        Pexec(PE_GOTHENFREE, "", (char *)pd, NULL);
     }
 #endif
 
@@ -694,14 +720,14 @@ void biosmain(void)
 
     if(cmdload != 0) {
         /* Pexec a program called COMMAND.PRG */
-        trap1_pexec(PE_LOADGO, "COMMAND.PRG", "", default_env);
+        Pexec(PE_LOADGO, "COMMAND.PRG", "", NULL);
     } else if (exec_os) {
         /* start the default (ROM) shell */
         PD *pd;
-        pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", default_env);
-        pd->p_tbase = (char *) exec_os;
+        pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
+        pd->p_tbase = (UBYTE *) exec_os;
         pd->p_tlen = pd->p_dlen = pd->p_blen = 0;
-        trap1_pexec(PE_GO, "", pd, "");
+        Pexec(PE_GO, "", (char*)pd, NULL);
     }
 
 #if CONF_WITH_SHUTDOWN
@@ -1106,3 +1132,14 @@ const PFLONG bios_vecs[] = {
 };
 
 const UWORD bios_ent = ARRAY_SIZE(bios_vecs);
+
+#if CONF_WITH_EXTENDED_MOUSE
+
+/* Does this pointer belong to our TEXT segment? */
+BOOL is_text_pointer(const void *p)
+{
+    UBYTE *pb = (UBYTE *)p;
+    return pb >= (UBYTE *)&os_header && pb < _etext;
+}
+
+#endif /* CONF_WITH_EXTENDED_MOUSE */

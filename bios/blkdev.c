@@ -1,7 +1,7 @@
 /*
  * blkdev.c - BIOS block device functions
  *
- * Copyright (C) 2002-2018 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -13,11 +13,9 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "gemerror.h"
-#include "kprint.h"
 #include "asm.h"
 #include "tosvars.h"
 #include "ahdi.h"
@@ -101,7 +99,9 @@ void blkdev_init(void)
 
     /* setup booting related vectors */
     hdv_boot    = blkdev_hdv_boot;
-    hdv_init    = 0;    /* blkdev_hdv_init; */
+    /* On TOS hdv_init points to the floppy detection and setup routine. */
+    /* EmuTOS does not use hdv_init, but initializes it for compatibility. */
+    hdv_init    = flop_hdv_init;
 
     /* setup general block device vectors */
     hdv_bpb     = blkdev_getbpb;

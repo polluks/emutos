@@ -3,31 +3,127 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2018 The EmuTOS development team
+ * Copyright 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
 #include "intmath.h"
 #include "string.h"
+#include "aesext.h"
 #include "vdi_defs.h"
-#include "../bios/lineavars.h"
+#include "vdistub.h"
+#include "lineavars.h"
+#include "biosext.h"
 
 
-extern const Fonthead *def_font;    /* Default font of open workstation */
-extern const Fonthead *font_ring[]; /* Ring of available fonts */
+/*
+ * start of calculations extracted from vdi_tblit.S
+ *
+ * the calculations (as revised by the addition of parentheses) for the
+ * 8x16 font have been verified with a test program.  the maximum usage
+ * is observed with text that has been rotated, skewed and outlined:
+ * 72 bytes for the small buffer and 212 bytes for the large buffer.
+ */
 
-extern WORD font_count;         /* Number of fonts in driver */
-extern WORD deftxbuf[];         /* Default text scratch buffer */
-extern const WORD scrtsiz;      /* Default offset to large text buffer */
+/*
+ *  NOTE: The calculations below should serve as an example for
+ *  determining the cell size and buffer size required for creating
+ *  a scratch character buffer for various sized fonts.
+ *
+ *  A larger scratch buffer must be used for character rotation/replication.
+ *  Size requirement calculations for this buffer are outlined below.
+ *  NOTE: font dependent equates would normally be found in the font header.
+ */
 
-extern Fonthead fon6x6;         /* See bios/fntxxx.c */
-extern Fonthead fon8x8;         /* See bios/fntxxx.c */
-extern Fonthead fon8x16;        /* See bios/fntxxx.c */
+/*
+ * 8x16 font data
+ */
+#define l_off       1           /* left offset from skew */
+#define r_off       7           /* right offset from skew */
+#define form_ht     16          /* form height */
+#define mxcelwd     8           /* maximum cell width */
+
+#define total_off   (l_off+r_off)       /* total skew offset */
+
+/*
+ *  Since a character cell may be rotated 90 or 270 degrees, the cell
+ *  height and width may be interchanged.  The width must be a multiple
+ *  of a word (e.g. a 3-pixel width requires a minimum of 16 bits), but
+ *  the height needn't be rounded up in a similar fashion, since it
+ *  represents the number of rows).  Cell width and cell height must be
+ *  calculated two different ways in order to accommodate rotation.
+ */
+#define cel_ww  (((total_off+mxcelwd+15)/16)*2) /* worst case # bytes/row if width */
+#define cel_wh  (total_off+mxcelwd)     /* cell "width" if used as height (90 rotation) */
+#define cel_hh  (form_ht)               /* cell height if used as height */
+#define cel_hw  (((form_ht+15)/16)*2)   /* cell "height" if used as width (90 rotation) */
+
+/*
+ *  The maximum of:
+ *      cell width (as width) * cell height (as height)
+ *      cell width (as height) * cell height (as width)
+ *  will be used for the basic buffer size.
+ */
+#define cel_sz0 (cel_ww*cel_hh) /* cell size if no rotation */
+#define cel_sz9 (cel_wh*cel_hw) /* cell size if 90 deg rotation */
+
+#if cel_sz0 >= cel_sz9
+# define cel_siz    (cel_sz0*2)
+#else
+# define cel_siz    (cel_sz9*2)
+#endif
+
+/*
+ *  Now we repeat the whole thing for doubled cell dimensions
+ */
+#define cel2_ww     ((((2*(total_off+mxcelwd))+3+15)/16)*2)
+#define cel2_wh     ((2*(total_off+mxcelwd))+2)
+#define cel2_hh     ((2*form_ht)+2)
+#define cel2_hw     ((((2*form_ht)+3+15)/16)*2)
+
+#define cel2_sz0    (cel2_ww*cel2_hh)   /* doubled cell size, no rotation */
+#define cel2_sz9    (cel2_wh*cel2_hw)   /* doubled cell size, 90 deg rotation */
+
+#if cel2_sz0 >= cel2_sz9
+# define cel2_siz   (cel2_sz0)
+#else
+# define cel2_siz   (cel2_sz9)
+#endif
+
+/*
+ *  [The following is unclear to me - RFB]
+ *  Determine the maximum horizontal line (from width or height)
+ *  which is required for outlining the character buffer.
+ *  For worst case add two bytes.
+ */
+#if cel2_ww >= cel2_hw
+# define out_add    (cel2_ww+2)
+#else
+# define out_add    (cel2_hw+2)
+#endif
+
+/*
+ *  Since outlining can happen in either the small or large buffer, the
+ *  small buffer requires at least (cel_siz+out_add) bytes, and the large
+ *  buffer requires (cel2_siz+out_add) bytes.
+ *
+ *  IMPORTANT: in order to be able to rearrange & simplify the text
+ *  blitting code, it is desirable to be able to rotate and/or scale
+ *  the text in either buffer.  Therefore both buffers should be 'large'
+ *  buffers.  The following defines & tests have been adjusted accordingly.
+ */
+#define SCRATCHBUF_OFFSET   (cel2_siz+out_add)
+#if SCRATCHBUF_SIZE < (2*SCRATCHBUF_OFFSET)
+# error SCRATCHBUF_SIZE is too small for specified font metrics
+#endif
+/*
+ * end of calculations extracted from vdi_tblit.S
+ */
+
 
 /*
  * Local structure for passing justification info
@@ -69,7 +165,7 @@ static WORD calc_height(Vwk *vwk)
     height = fnt_ptr->top + fnt_ptr->bottom + 1;    /* handles scaled fonts */
 
     if (vwk->style & F_OUTLINE)
-        height += 2;        /* outlining adds 1 pixel all around */
+        height += OUTLINE_THICKNESS * 2;    /* outlining adds 1 pixel all around */
 
     return height;
 }
@@ -109,10 +205,71 @@ static WORD calc_width(Vwk *vwk, WORD cnt, WORD *str)
         width += fnt_ptr->left_offset + fnt_ptr->right_offset;
 
     if (vwk->style & F_OUTLINE)
-        width += cnt * 2;       /* outlining adds 1 pixel all around */
+        width += cnt * OUTLINE_THICKNESS * 2;   /* outlining adds 1 pixel all around */
 
     return width;
 }
+
+#if CONF_WITH_VDI_TEXT_SPEEDUP
+/*
+ * returns TRUE if we can use a direct screen blit
+ *
+ * the following must all be true:
+ *  there are no effects
+ *  there is no rotation
+ *  the output is left-aligned
+ *  the output is not justified
+ *  the characters are byte-aligned
+ *  the font is monospace with a cell width of 8
+ *  the font contains glyphs for all 256 characters
+ *  the entire text string will not be clipped
+ */
+static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
+{
+    const Fonthead *fnt_ptr;
+    WORD xmin, xmax, ymin, ymax;
+
+    if (vwk->style | vwk->chup | vwk->h_align)
+        return FALSE;
+
+    if (justified)
+        return FALSE;
+
+    if (DESTX & 0x0007)
+        return FALSE;
+
+    fnt_ptr = vwk->cur_font;
+
+    if (!MONO || (fnt_ptr->max_cell_width != 8))
+        return FALSE;
+
+    if ((fnt_ptr->first_ade != 0) || (fnt_ptr->last_ade != 255))
+        return FALSE;
+
+    if (vwk->clip)
+    {
+        xmin = vwk->xmn_clip;
+        ymin = vwk->ymn_clip;
+        xmax = vwk->xmx_clip;
+        ymax = vwk->ymx_clip;
+    }
+    else
+    {
+        xmin = 0;       /* must not exceed screen limits */
+        ymin = 0;
+        xmax = xres;
+        ymax = yres;
+    }
+
+    /* check that string falls entirely within clip area */
+    if ((DESTX < xmin) || (DESTX+width > xmax))
+        return FALSE;
+    if ((DESTY < ymin) || (DESTY+DELY > ymax))
+        return FALSE;
+
+    return TRUE;
+}
+#endif
 
 /*
  * output specified text string
@@ -128,6 +285,7 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     WORD tx1, tx2, ty1, ty2;
     WORD delh, delv;
     WORD d1, d2;
+    WORD outline, underline;
 
     WORD temp;
     const Fonthead *fnt_ptr;
@@ -138,11 +296,16 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     if (count <= 0)     /* quick out for unlikely occurrence */
         return;
 
+    if (width < 0)      /* called from vdi_v_gtext() */
+        width = calc_width(vwk, count, str);
+
+    fnt_ptr = vwk->cur_font;    /* get current font pointer */
+
     /* some data copying for the assembler part */
     DDAINC = vwk->dda_inc;
     SCALDIR = vwk->t_sclsts;
     SCALE = vwk->scaled;
-    MONO = F_MONOSPACE & vwk->cur_font->flags;
+    MONO = F_MONOSPACE & fnt_ptr->flags;
     WRT_MODE = vwk->wrt_mode;
 
     CLIP = vwk->clip;
@@ -154,8 +317,6 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     CHUP = vwk->chup;
     SCRPT2 = vwk->scrpt2;
     SCRTCHP = vwk->scrtchp;
-
-    fnt_ptr = vwk->cur_font;     /* Get current font pointer in register */
 
     if (vwk->style & F_THICKEN)
         WEIGHT = fnt_ptr->thicken;
@@ -177,19 +338,22 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     FBASE = fnt_ptr->dat_table;
     FWIDTH = fnt_ptr->form_width;
 
+    /*
+     * in Atari TOS, outlined text starts 1 pixel earlier than
+     * non-outlined, so we set 'outline' to handle that.
+     * this also affects horizontal alignment calculations.
+     */
+    outline = (vwk->style & F_OUTLINE) ? OUTLINE_THICKNESS : 0;
+
     switch(vwk->h_align) {
     default:                /* normally case 0: left justified */
         delh = 0;
         break;
     case 1:
-        if (width < 0)      /* called from vdi_v_gtext() */
-            width = calc_width(vwk, count, str);
-        delh = width / 2;
+        delh = width / 2 - outline;
         break;
     case 2:
-        if (width < 0)      /* called from vdi_v_gtext() */
-            width = calc_width(vwk, count, str);
-        delh = width;
+        delh = width - (outline * 2);
         break;
     }
 
@@ -219,36 +383,51 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         break;
     }
 
+    /*
+     * like Atari TOS, we try to ensure that any underline will fall within
+     * the character cell.  if we have sufficient room (e.g. in an 8x16 font),
+     * we drop the underline to the bottom line; otherwise it sits on the
+     * descent line.  in the latter case, if the font has been doubled, the
+     * underline will be thick, and we need to raise it.
+     */
+    if (fnt_ptr->bottom > fnt_ptr->ul_size)             /* normal for 8x16 font */
+        underline = 1;
+    else if (vwk->scaled && (vwk->dda_inc == 0xffff))   /* doubling size exactly? */
+        underline = -1;
+    else
+        underline = 0;
+    underline += fnt_ptr->ul_size;
+
     point = (Point*)PTSIN;
     switch(vwk->chup) {
     default:                /* normally case 0: no rotation */
-        DESTX = point->x - delh;
-        DESTY = point->y - delv;
+        DESTX = point->x - delh - outline;
+        DESTY = point->y - delv - outline;
         startx = DESTX;
-        starty = DESTY + fnt_ptr->top + fnt_ptr->ul_size + 1;
+        starty = DESTY + fnt_ptr->top + underline;
         xfact = 0;
         yfact = 1;
         break;
     case 900:
-        DESTX = point->x - delv;
-        DESTY = point->y + delh + 1;
-        startx = DESTX + fnt_ptr->top + fnt_ptr->ul_size + 1;
+        DESTX = point->x - delv - outline;
+        DESTY = point->y + delh + outline + 1;
+        startx = DESTX + fnt_ptr->top + underline;
         starty = DESTY;
         xfact = 1;
         yfact = 0;
         break;
     case 1800:
-        DESTX = point->x + delh + 1;
-        DESTY = point->y - ((fnt_ptr->top + fnt_ptr->bottom) - delv);
+        DESTX = point->x + delh + outline + 1;
+        DESTY = point->y - ((fnt_ptr->top + fnt_ptr->bottom) - delv) - outline;
         startx = DESTX;
-        starty = (DESTY + fnt_ptr->bottom) - (fnt_ptr->ul_size + 1);
+        starty = DESTY + fnt_ptr->bottom - underline;
         xfact = 0;
         yfact = -1;
         break;
     case 2700:
-        DESTX = point->x - ((fnt_ptr->top + fnt_ptr->bottom) - delv);
-        DESTY = point->y - delh;
-        startx = (DESTX + fnt_ptr->bottom) - (fnt_ptr->ul_size + 1);
+        DESTX = point->x - ((fnt_ptr->top + fnt_ptr->bottom) - delv) - outline;
+        DESTY = point->y - delh - outline;
+        startx = DESTX + fnt_ptr->bottom - underline;
         starty = DESTY;
         xfact = -1;
         yfact = 0;
@@ -257,6 +436,18 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
 
     TEXTFG = vwk->text_color;
     DELY = fnt_ptr->form_height;
+
+#if CONF_WITH_VDI_TEXT_SPEEDUP
+    /*
+     * call special direct screen blit routine if applicable
+     */
+    if (ok_for_direct_blit(vwk, width, justified))
+    {
+        direct_screen_blit(count, str);
+        return;
+    }
+#endif
+
     XDDA = 32767;       /* init the horizontal dda */
 
     for (j = 0; j < count; j++) {
@@ -305,19 +496,20 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
         line->x1 = startx;
         line->y1 = starty;
 
-        if (vwk->chup % 1800 == 0) {
-            line->x2 = DESTX;
-            line->y2 = line->y1;
-        } else {
+        if ((vwk->chup == 900) || (vwk->chup == 2700)) {
             line->x2 = line->x1;
             line->y2 = DESTY;
+        } else {
+            line->x2 = DESTX;
+            line->y2 = line->y1;
         }
+
         if (vwk->style & F_LIGHT)
-            LN_MASK = vwk->cur_font->lighten;
+            LN_MASK = fnt_ptr->lighten;
         else
             LN_MASK = 0xffff;
 
-        count = vwk->cur_font->ul_size;
+        count = fnt_ptr->ul_size;
         for (i = 0; i < count; i++) {
             if (vwk->clip) {
                 tx1 = line->x1;
@@ -354,8 +546,8 @@ void text_init2(Vwk * vwk)
 {
     vwk->cur_font = def_font;
     vwk->loaded_fonts = NULL;
-    vwk->scrpt2 = scrtsiz;
-    vwk->scrtchp = deftxbuf;
+    vwk->scrpt2 = SCRATCHBUF_OFFSET;
+    vwk->scrtchp = vdishare.deftxbuf;
     vwk->num_fonts = font_count;
 
     vwk->style = 0;        /* reset special effects */
@@ -805,7 +997,7 @@ void vdi_vqt_extent(Vwk * vwk)
 
     CONTRL[2] = 4;
 
-    memset(PTSOUT,0,8*sizeof(WORD));
+    bzero(PTSOUT,8*sizeof(WORD));
     switch (vwk->chup) {
     default:                    /* 0 or 3600 ... see vdi_vst_rotation() */
         PTSOUT[2] = width;
@@ -986,6 +1178,11 @@ void gdp_justified(Vwk * vwk)
 
     max_x = PTSIN[2];
 
+    bzero(&just, sizeof(JUSTINFO));     /* set zero default values */
+
+    /*
+     * calculate values for interword spacing
+     */
     if (interword && spaces) {
         delword = (max_x - width) / spaces;
         just.rmword = (max_x - width) % spaces;
@@ -1012,35 +1209,26 @@ void gdp_justified(Vwk * vwk)
         switch (vwk->chup) {
         default:                /* normally case 0: no rotation */
             just.wordx = delword;
-            just.wordy = 0;
             just.rmwordx = direction;
-            just.rmwordy = 0;
             break;
         case 900:
-            just.wordx = 0;
             just.wordy = 0 - delword;
-            just.rmwordx = 0;
             just.rmwordy = 0 - direction;
             break;
         case 1800:
             just.wordx = 0 - delword;
-            just.wordy = 0;
             just.rmwordx = 0 - direction;
-            just.rmwordy = 0;
             break;
         case 2700:
-            just.wordx = 0;
             just.wordy = delword;
-            just.rmwordx = 0;
             just.rmwordy = direction;
             break;
         }
-    } else {
-        just.wordx = 0;
-        just.wordy = 0;
-        just.rmword = 0;
     }
 
+    /*
+     * calculate values for intercharacter spacing
+     */
     if (interchar && cnt > 1) {
         delchar = (max_x - width) / (cnt - 1);
         just.rmchar = (max_x - width) % (cnt - 1);
@@ -1054,33 +1242,21 @@ void gdp_justified(Vwk * vwk)
         switch (vwk->chup) {
         default:                /* normally case 0: no rotation */
             just.charx = delchar;
-            just.chary = 0;
             just.rmcharx = direction;
-            just.rmchary = 0;
             break;
         case 900:
-            just.charx = 0;
             just.chary = 0 - delchar;
-            just.rmcharx = 0;
             just.rmchary = 0 - direction;
             break;
         case 1800:
             just.charx = 0 - delchar;
-            just.chary = 0;
             just.rmcharx = 0 - direction;
-            just.rmchary = 0;
             break;
         case 2700:
-            just.charx = 0;
             just.chary = delchar;
-            just.rmcharx = 0;
             just.rmchary = direction;
             break;
         }
-    } else {
-        just.charx = 0;
-        just.chary = 0;
-        just.rmchar = 0;
     }
 
     output_text(vwk, cnt, str, max_x, &just);

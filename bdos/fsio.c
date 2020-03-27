@@ -2,7 +2,7 @@
  * fsio.c - read/write routines for the file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2018 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -10,13 +10,13 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
-#include "kprint.h"
+#include "tosvars.h"
+#include "intmath.h"
 
 
 /*
@@ -315,7 +315,7 @@ static void addit(OFD *p, long siz, int flg)
 static long xrw(int wrtflg, OFD *p, long len, char *ubufr)
 {
     DMD *dm;
-    char *bufp;
+    UBYTE *bufp;
     unsigned int bytn, tailrec;
     int lenxfr, lentail;
     RECNO recn, num;
@@ -416,7 +416,8 @@ static long xrw(int wrtflg, OFD *p, long len, char *ubufr)
             {
                 nrecs += dm->m_clsiz;
                 nbyts += dm->m_clsizb;
-                if (!num) goto mulio;
+                if (!num)
+                    goto mulio;
             }
             else
             {

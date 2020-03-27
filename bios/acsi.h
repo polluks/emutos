@@ -1,7 +1,7 @@
 /*
  * acsi.h - Atari Computer System Interface (ACSI) support
  *
- * Copyright (C) 2002-2018 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -12,8 +12,6 @@
 
 #ifndef ACSI_H
 #define ACSI_H
-
-#include "portab.h"
 
 #if CONF_WITH_ACSI
 

@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*       Copyright (C) 2002-2018 The EmuTOS development team
+*       Copyright (C) 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,15 +19,16 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include <string.h>
-
-#include "portab.h"
+#include "emutos.h"
+#include "string.h"
 #include "obdefs.h"
 #include "rsdefs.h"
+#include "aesdefs.h"
+#include "aesext.h"
 #include "intmath.h"
 #include "gsxdefs.h"
 #include "gemdos.h"
+#include "gemerror.h"
 #include "optimize.h"
 
 #include "deskbind.h"
@@ -36,8 +37,6 @@
 #include "deskfpd.h"
 #include "deskwin.h"
 #include "gembind.h"
-#include "../bios/videl.h"
-#include "../bios/amiga.h"
 #include "aesbind.h"
 #include "deskrsrc.h"
 #include "deskfun.h"
@@ -49,7 +48,6 @@
 #include "icons.h"
 #include "xbiosbind.h"
 #include "biosext.h"
-#include "kprint.h"
 
 
 /*
@@ -101,17 +99,20 @@
 #define INF_E2_MNUCLICK 0x08    /* 1 => click to drop down menus */
 #define INF_E2_DAYMONTH 0x04    /* 1 => day before month */
 #define INF_E2_24HCLOCK 0x02    /* 1 => 24 hour clock */
-#define INF_E2_SOUND    0x01    /* 1 => sound effects on */
                                 /* following are defaults if no .INF */
-#define INF_E2_DEFAULT  (INF_E2_BLITTER|INF_E2_IDTDATE|INF_E2_IDTTIME|INF_E2_SOUND)
+#define INF_E2_DEFAULT  (INF_E2_BLITTER|INF_E2_IDTDATE|INF_E2_IDTTIME)
 
                             /* 'E' bytes 3-4 are video mode (see process_inf1() in aes/geminit.c) */
 
                             /* 'E' byte 5 */
 #define INF_E5_NOSORT   0x80    /* 1 => do not sort folder contents (overrides INF_E1_SORTMASK) */
-    /* these apply when launching an application that is not an 'installed application' */
+    /* the next 2 apply when launching an application that is not an 'installed application' */
 #define INF_E5_APPDIR   0x40    /* 1 => set current dir to app's dir (else to top window dir) */
 #define INF_E5_ISFULL   0x20    /* 1 => pass full path in args (else filename only) */
+#define INF_E5_NOSIZE   0x10    /* 1 => disable 'size to fit' for windows */
+#define INF_E5_NOCACHE  0x08    /* 1 => disable cache */
+                                /* following are defaults if no .INF */
+#define INF_E5_DEFAULT  (INF_E5_APPDIR|INF_E5_ISFULL)
 
                             /* 'Q' bytes 1-6 (default desktop/window pattern/colour values) */
 #define INF_Q1_DEFAULT  (IP_4PATT << 4) | BLACK     /* desktop, 1 plane */
@@ -134,9 +135,15 @@
  */
 #define CPDATA_LEN      128
 
+/*
+ * the maximum size of an EMUDESK.INF line (see app_save())
+ */
+#define MAX_SIZE_INF_LINE   (MAXPATHLEN+100)    /* conservative */
+
+
 static WORD     inf_rev_level;  /* revision level of current EMUDESK.INF */
 
-static char     *gl_buffer;
+static char     *atextptr;      /* current pointer within ANODE text buffer */
 
 
 /* When we can't get EMUDESK.INF via shel_get() or by reading from
@@ -163,7 +170,7 @@ static char     *gl_buffer;
  */
 static const char desk_inf_data1[] =
     "#R 01\r\n"                         /* INF_REV_LEVEL */
-    "#E 1A E1\r\n"                      /* INF_E1_DEFAULT and INF_E2_DEFAULT */
+    "#E 1A E0 00 00 60\r\n"             /* INF_E1_DEFAULT, INF_E2_DEFAULT, INF_E5_DEFAULT */
 #if CONF_WITH_BACKGROUNDS
     "#Q 41 40 43 40 43 40\r\n"          /* INF_Q1_DEFAULT -> INF_Q6_DEFAULT */
 #endif
@@ -238,8 +245,8 @@ void app_free(ANODE *pa)
 
 
 /*
- *  Scans a string into a private buffer used for ANODE text (currently
- *  gl_buffer[]) and ups the string pointer for next time.
+ *  Scans a string into a buffer used for ANODE text (currently G.g_atext[])
+ *  and ups the string pointer for next time.
  *
  *  Leading spaces are ignored; the scan is terminated by @, '\r', or
  *  the null character.
@@ -250,8 +257,8 @@ void app_free(ANODE *pa)
  */
 char *scan_str(char *pcurr, char **ppstr)
 {
-    char *dest = G.g_pbuff;
-    char *end = gl_buffer + SIZE_BUFF - 1;
+    char *dest = atextptr;
+    char *end = G.g_atext + SIZE_BUFF - 1;
 
     *ppstr = dest;              /* return ptr to start of string in buffer */
 
@@ -276,7 +283,7 @@ char *scan_str(char *pcurr, char **ppstr)
         dest++;
     else
         KDEBUG(("scan_str(): ANODE string buffer is too small\n"));
-    G.g_pbuff = dest;           /* update buffer ptr for next time */
+    atextptr = dest;            /* update buffer ptr for next time */
 
     return pcurr;               /* next input character */
 }
@@ -303,14 +310,14 @@ static char *app_parse(char *pcurr, ANODE *pa)
         break;
     case 'Y':                             /* GEM App needs parms  */
         pa->a_flags = AF_ISPARM;
-        /* drop thru */
+        FALLTHROUGH;
     case 'G':                             /* GEM App no parms     */
         pa->a_type = AT_ISFILE;
         pa->a_flags |= AF_ISCRYS;
         break;
     case 'P':                             /* TOS App needs parms  */
         pa->a_flags = AF_ISPARM;
-        /* drop thru */
+        FALLTHROUGH;
     case 'F':                             /* TOS App no parms     */
         pa->a_type = AT_ISFILE;
         break;
@@ -319,7 +326,7 @@ static char *app_parse(char *pcurr, ANODE *pa)
         break;
     case 'I':                             /* Executable file      */
         pa->a_flags = AF_ISEXEC;
-        /* drop thru */
+        FALLTHROUGH;
     case 'N':                             /* Non-executable file  */
         pa->a_type = AT_ISFILE;
         pa->a_flags |= AF_WINDOW;
@@ -331,6 +338,12 @@ static char *app_parse(char *pcurr, ANODE *pa)
         break;
     case 'V':                           /* Directory shortcut on desktop */
         pa->a_type = AT_ISFOLD;
+        pa->a_flags = AF_ISDESK;
+        break;
+#endif
+#if CONF_WITH_PRINTER_ICON
+    case 'O':                           /* Printer */
+        pa->a_type  = AT_ISPRNT;
         pa->a_flags = AF_ISDESK;
         break;
 #endif
@@ -500,10 +513,19 @@ static WORD load_user_icons(void)
 
     /*
      * determine the number of icons in the user's icon resource
+     *
+     * note: since the icons must be in the root of the boot drive, we
+     * make sure that they are there before calling rsrc_load(), which
+     * could otherwise search in multiple directories, taking longer
+     * and potentially causing useless form alerts
      */
     strcpy(icon_rsc_name, ICON_RSC_NAME);
     icon_rsc_name[0] += G.g_stdrv;  /* Adjust drive letter  */
-    if (!rsrc_load(icon_rsc_name))
+    rc = -1;
+    if (dos_sfirst(icon_rsc_name, FA_RO|FA_SYSTEM) == 0)
+        if (rsrc_load(icon_rsc_name))
+            rc = 0;
+    if (rc < 0)
     {
         KDEBUG(("can't load user desktop icons from %s\n",icon_rsc_name));
         return -1;
@@ -556,8 +578,8 @@ static WORD initialise_anodes(void)
     /*
      * allocate buffer for ANODE text
      */
-    G.g_pbuff = gl_buffer = dos_alloc_anyram(SIZE_BUFF);
-    if (!gl_buffer)
+    atextptr = G.g_atext = dos_alloc_anyram(SIZE_BUFF);
+    if (!G.g_atext)
     {
         KDEBUG(("insufficient memory for anode text buffer (need %ld bytes)\n",SIZE_BUFF));
         return -1;
@@ -573,7 +595,7 @@ static WORD initialise_anodes(void)
         KDEBUG(("insufficient memory for %ld anodes\n",NUM_ANODES));
         return -1;
     }
-    memset(G.g_alist,0x00,NUM_ANODES*sizeof(ANODE));
+    bzero(G.g_alist,NUM_ANODES*sizeof(ANODE));
 
     for (i = 0; i < NUM_ANODES-1; i++)
         G.g_alist[i].a_next = &G.g_alist[i+1];
@@ -613,6 +635,105 @@ static WORD app_rdicon(void)
 
 
 /*
+ *  Read in the EMUDESK.INF file
+ */
+static void read_inf_file(char *infbuf)
+{
+    LONG ret;
+    char inf_file_name[sizeof(INF_FILE_NAME)];
+
+    strcpy(inf_file_name, INF_FILE_NAME);
+    inf_file_name[0] += G.g_stdrv;      /* Adjust drive letter  */
+
+    ret = dos_load_file(inf_file_name, SIZE_SHELBUF-CPDATA_LEN-1, infbuf);
+    if (ret < 0L)
+        ret = 0L;
+    infbuf[ret] = '\0';
+}
+
+
+/*
+ *  Create a default minimal internal EMUDESK.INF
+ */
+static void build_inf(char *infbuf, WORD xcnt, WORD ycnt)
+{
+    LONG drivemask;
+    char *p, *text;
+    int icon_index = 0;
+    int drive_x = 0, drive_y = 0;
+    int icon_x, icon_y;
+    int icon_type;
+    char drive_letter;
+    int i;
+
+    /* Environment and Windows */
+    strcpy(infbuf, desk_inf_data1);
+    p = infbuf + sizeof(desk_inf_data1) - 1;
+
+    /* Scan for valid drives: */
+    drivemask = dos_sdrv(dos_gdrv());
+    for (i = 0; i < BLKDEVNUM; i++)
+    {
+        if (drivemask&(1L<<i))
+        {
+            drive_x = icon_index % xcnt; /* x position */
+            drive_y = icon_index / xcnt; /* y position */
+            icon_type = (i > 1) ? IG_HARD : IG_FLOPPY;
+            drive_letter = 'A' + i;
+            text = desktop_str_addr(STDISK);
+            p += sprintf(p, "#M %02X %02X %02X FF %c %s %c@ @\r\n",
+                    drive_x, drive_y, icon_type, drive_letter, text, drive_letter);
+            icon_index++;
+        }
+    }
+
+    /* Copy core data part 2 */
+    strcpy(p, desk_inf_data2);
+    p += sizeof(desk_inf_data2) - 1;
+
+    /* add Trash icon to end */
+    icon_x = 0;             /* Left */
+    icon_y = ycnt - 1;      /* Bottom */
+    if (drive_y >= icon_y)  /* if the last drive icon overflows over */
+        icon_x = xcnt - 1;  /*  the trash row, force trash to right  */
+    text = desktop_str_addr(STTRASH);
+    p += sprintf(p, "#T %02X %02X %02X FF   %s@ @\r\n",
+            icon_x, icon_y, IG_TRASH, text);
+
+#if CONF_WITH_PRINTER_ICON
+    /* add Printer icon, if room */
+    if (icon_x == 0)        /* trash at left of bottom row */
+    {
+        icon_x = xcnt - 1;
+        text = desktop_str_addr(STPRINT);
+        sprintf(p, "#O %02X %02X %02X FF   %s@ @\r\n",
+                icon_x, icon_y, IG_PRINT, text);
+    }
+#endif
+}
+
+
+/*
+ *  Allocate a temporary buffer
+ *
+ *  Note: if the buffer cannot be allocated, we never return!
+ */
+static char *must_alloc_buf(LONG size)
+{
+    char *buf;
+
+    buf = dos_alloc_anyram(size);
+    if (!buf)
+    {
+        KDEBUG(("insufficient memory for temporary EMUDESK.INF buffer (need %ld bytes)\n",size));
+        nomem_alert();          /* infinite loop */
+    }
+
+    return buf;
+}
+
+
+/*
  *  Initialize the application list by reading in the EMUDESK.INF
  *  file, either from memory or from the disk if the shel_get
  *  indicates no message is there.
@@ -622,12 +743,12 @@ void app_start(void)
     WORD i, x, y;
     ANODE *pa;
     WSAVE *pws;
+    CSAVE *cnxsave = G.g_cnxsave;
     char *buf, *inf_data;
     char *pcurr, *ptmp, *pauto = NULL;
     WORD envr, xcnt, ycnt, xcent, wincnt, dummy;
 
-    /* remember start drive */
-    G.g_stdrv = dos_gdrv();
+    MAYBE_UNUSED(i);
 
     /* initialise the ANODE stuff */
     if (initialise_anodes() < 0)
@@ -644,12 +765,7 @@ void app_start(void)
     }
 
     /* allocate a temporary buffer for EMUDESK.INF */
-    buf = dos_alloc_anyram(SIZE_AFILE);
-    if (!buf)
-    {
-        KDEBUG(("insufficient memory for temporary EMUDESK.INF buffer (need %d bytes)\n",SIZE_AFILE));
-        nomem_alert();          /* infinite loop */
-    }
+    buf = must_alloc_buf(SIZE_SHELBUF);
 
     G.g_wicon = (MAX_ICONTEXT_WIDTH * gl_wschar) + (2 * G.g_iblist[0].ib_xtext);
     G.g_hicon = G.g_iblist[0].ib_hicon + gl_hschar + 2;
@@ -673,73 +789,15 @@ void app_start(void)
     G.g_patcol[2].window = INF_Q6_DEFAULT;
 #endif
 
-    shel_get(buf, SIZE_AFILE);
+    shel_get(buf, SIZE_SHELBUF);
     inf_data = buf + CPDATA_LEN;
     if (!(bootflags & BOOTFLAG_SKIP_AUTO_ACC)
-        && inf_data[0] != '#')              /* invalid signature    */
-    {                                       /*   so read from disk  */
-        LONG ret;
-        WORD fh;
-        char inf_file_name[16];
-        strcpy(inf_file_name, INF_FILE_NAME);
-        inf_file_name[0] += G.g_stdrv;      /* Adjust drive letter  */
-        ret = dos_open(inf_file_name, 0x0);
-        if (ret >= 0L)
-        {
-            fh = (WORD) ret;
-            ret = dos_read(fh, SIZE_AFILE-CPDATA_LEN, inf_data);
-            if (ret < 0L)
-                ret = 0L;                   /* length read */
-            dos_close(fh);
-            inf_data[ret] = '\0';
-        }
-    }
+     && (inf_data[0] != '#'))               /* invalid signature    */
+        read_inf_file(inf_data);            /*   so read from disk  */
 
-    /* If there's still no EMUDESK.INF data, use built-in now: */
+    /* If there's still no EMUDESK.INF data, build one now */
     if (inf_data[0] != '#')
-    {
-        LONG drivemask;
-        char *text;
-        int icon_index = 0;
-        int drive_x = 0, drive_y = 0;
-        int trash_x, trash_y;
-        int icon_type;
-        char drive_letter;
-
-        /* Environment and Windows */
-        strcat(inf_data, desk_inf_data1);
-
-        /* Scan for valid drives: */
-        drivemask = dos_sdrv(dos_gdrv());
-        for (i = 0; i < BLKDEVNUM; i++)
-        {
-            if (drivemask&(1L<<i))
-            {
-                x = strlen(inf_data);
-                drive_x = icon_index % xcnt; /* x position */
-                drive_y = icon_index / xcnt; /* y position */
-                icon_type = (i > 1) ? 0 /* Hard disk */ : 1 /* Floppy */;
-                drive_letter = 'A' + i;
-                rsrc_gaddr_rom(R_STRING, STDISK, (void **)&text);
-                sprintf(inf_data + x, "#M %02X %02X %02X FF %c %s %c@ @\r\n",
-                        drive_x, drive_y, icon_type, drive_letter, text, drive_letter);
-                icon_index++;
-            }
-        }
-
-        /* Copy core data part 2 */
-        strcat(inf_data, desk_inf_data2);
-
-        /* add Trash icon to end */
-        x = strlen(inf_data);
-        trash_x = 0;            /* Left */
-        trash_y = ycnt-1;       /* Bottom */
-        if (drive_y >= trash_y) /* if the last drive icon overflows over */
-            trash_x = xcnt-1;   /*  the trash row, force trash to right  */
-        rsrc_gaddr_rom(R_STRING, STTRASH, (void **)&text);
-        sprintf(inf_data + x, "#T %02X %02X 03 FF   %s@ @\r\n",
-                trash_x, trash_y, text);
-    }
+        build_inf(inf_data, xcnt, ycnt);
 
     wincnt = 0;
     inf_rev_level = 0;
@@ -772,6 +830,9 @@ void app_start(void)
         case 'X':                       /* File shortcut on desktop */
         case 'V':                       /* Directory shortcut on desktop */
 #endif
+#if CONF_WITH_PRINTER_ICON
+        case 'O':                       /* Printer */
+#endif
             pa = app_alloc();
             if (!pa)                    /* paranoia */
                 return;
@@ -789,8 +850,8 @@ void app_start(void)
             pcurr++;
             if (wincnt < NUM_WNODES)
             {
-                pws = &G.g_cnxsave.cs_wnode[wincnt];
-                pcurr = scan_2(pcurr, &dummy);
+                pws = &cnxsave->cs_wnode[wincnt];
+                pcurr = scan_2(pcurr, &pws->hsl_save);
                 pcurr = scan_2(pcurr, &pws->vsl_save);
 /* BugFix       */
                 pcurr = scan_2(pcurr, &pws->x_save);
@@ -813,36 +874,41 @@ void app_start(void)
         case 'E':                       /* Environment */
             pcurr++;
             pcurr = scan_2(pcurr, &envr);
-            G.g_cnxsave.cs_view = (envr & INF_E1_VIEWTEXT) ? V_TEXT : V_ICON;
-            G.g_cnxsave.cs_sort = ( (envr & INF_E1_SORTMASK) >> 5);
-            G.g_cnxsave.cs_confdel = ( (envr & INF_E1_CONFDEL) != 0);
-            G.g_cnxsave.cs_confcpy = ( (envr & INF_E1_CONFCPY) != 0);
-            G.g_cnxsave.cs_dblclick = envr & INF_E1_DCMASK;
+            cnxsave->cs_view = (envr & INF_E1_VIEWTEXT) ? V_TEXT : V_ICON;
+            cnxsave->cs_sort = ( (envr & INF_E1_SORTMASK) >> 5);
+            cnxsave->cs_confdel = ( (envr & INF_E1_CONFDEL) != 0);
+            cnxsave->cs_confcpy = ( (envr & INF_E1_CONFCPY) != 0);
+            cnxsave->cs_dblclick = envr & INF_E1_DCMASK;
 
             pcurr = scan_2(pcurr, &envr);
-            G.g_cnxsave.cs_blitter = ( (envr & INF_E2_BLITTER) != 0);
-            G.g_cnxsave.cs_confovwr = ( (envr & INF_E2_ALLOWOVW) == 0);
-            G.g_cnxsave.cs_mnuclick = ( (envr & INF_E2_MNUCLICK) != 0);
-            menu_click(G.g_cnxsave.cs_mnuclick, 1); /* tell system */
+            cnxsave->cs_blitter = ( (envr & INF_E2_BLITTER) != 0);
+            cnxsave->cs_confovwr = ( (envr & INF_E2_ALLOWOVW) == 0);
+            cnxsave->cs_mnuclick = ( (envr & INF_E2_MNUCLICK) != 0);
+            menu_click(cnxsave->cs_mnuclick, 1);    /* tell system */
             if (envr & INF_E2_IDTDATE)
-                G.g_cnxsave.cs_datefmt = DATEFORM_IDT;
+                cnxsave->cs_datefmt = DATEFORM_IDT;
             else
-                G.g_cnxsave.cs_datefmt = (envr & INF_E2_DAYMONTH) ? DATEFORM_DMY : DATEFORM_MDY;
+                cnxsave->cs_datefmt = (envr & INF_E2_DAYMONTH) ? DATEFORM_DMY : DATEFORM_MDY;
             if (envr & INF_E2_IDTTIME)
-                G.g_cnxsave.cs_timefmt = TIMEFORM_IDT;
+                cnxsave->cs_timefmt = TIMEFORM_IDT;
             else
-                G.g_cnxsave.cs_timefmt = (envr & INF_E2_24HCLOCK) ? TIMEFORM_24H : TIMEFORM_12H;
-            sound(FALSE, !(envr & INF_E2_SOUND), 0);
+                cnxsave->cs_timefmt = (envr & INF_E2_24HCLOCK) ? TIMEFORM_24H : TIMEFORM_12H;
 
             pcurr = scan_2(pcurr, &dummy);  /* skip video stuff */
             pcurr = scan_2(pcurr, &dummy);
 
             pcurr = scan_2(pcurr, &envr);
             if (envr & INF_E5_NOSORT)
-                G.g_cnxsave.cs_sort = CS_NOSORT;
+                cnxsave->cs_sort = CS_NOSORT;
 #if CONF_WITH_DESKTOP_CONFIG
-            G.g_cnxsave.cs_appdir = ((envr & INF_E5_APPDIR) != 0);
-            G.g_cnxsave.cs_fullpath = ((envr & INF_E5_ISFULL) != 0);
+            cnxsave->cs_appdir = ((envr & INF_E5_APPDIR) != 0);
+            cnxsave->cs_fullpath = ((envr & INF_E5_ISFULL) != 0);
+#endif
+#if CONF_WITH_SIZE_TO_FIT
+            cnxsave->cs_sizefit = ((envr & INF_E5_NOSIZE) == 0);
+#endif
+#if CONF_WITH_CACHE_CONTROL
+            cnxsave->cs_cache = ((envr & INF_E5_NOCACHE) == 0);
 #endif
             break;
 #if CONF_WITH_BACKGROUNDS
@@ -855,6 +921,20 @@ void app_start(void)
             }
             break;
 #endif
+        /*
+         * Menu item shortcuts can only be saved to EMUDESK.INF if
+         * CONF_WITH_DESKTOP_CONFIG is enabled.  However, we allow all
+         * versions of the ROM to _load_ menu item shortcuts.
+         */
+        case 'K':                       /* menu item shortcuts */
+            pcurr++;
+            for (i = 0; i < NUM_SHORTCUTS; i++)
+            {
+                WORD temp;
+                pcurr = scan_2(pcurr, &temp);
+                menu_shortcuts[i] = (UBYTE)temp;
+            }
+        break;
         }
     }
 
@@ -869,30 +949,28 @@ void app_start(void)
     }
 
     /* set up outlines for dragging files displayed as icons */
-    G.g_nmicon = 9;     /* number of points */
-    memset(G.g_xyicon, 0, sizeof(G.g_xyicon));
+    bzero(G.g_xyicon, sizeof(G.g_xyicon));
     xcent = (G.g_wicon - G.g_iblist[0].ib_wicon) / 2;
-    G.g_xyicon[0] = xcent;
-    G.g_xyicon[2] = xcent;
-    G.g_xyicon[3] = G.g_hicon-gl_hschar-2;
-    G.g_xyicon[5] = G.g_hicon-gl_hschar-2;
-    G.g_xyicon[7] = G.g_hicon;
-    G.g_xyicon[8] = G.g_wicon;
-    G.g_xyicon[9] = G.g_hicon;
-    G.g_xyicon[10] = G.g_wicon;
-    G.g_xyicon[11] = G.g_hicon-gl_hschar-2;
-    G.g_xyicon[12] = G.g_wicon-xcent;
-    G.g_xyicon[13] = G.g_hicon-gl_hschar-2;
-    G.g_xyicon[14] = G.g_wicon-xcent;
-    G.g_xyicon[16] = xcent;
+    G.g_xyicon[0].x = xcent;
+    G.g_xyicon[1].x = xcent;
+    G.g_xyicon[1].y = G.g_hicon-gl_hschar-2;
+    G.g_xyicon[2].y = G.g_hicon-gl_hschar-2;
+    G.g_xyicon[3].y = G.g_hicon;
+    G.g_xyicon[4].x = G.g_wicon;
+    G.g_xyicon[4].y = G.g_hicon;
+    G.g_xyicon[5].x = G.g_wicon;
+    G.g_xyicon[5].y = G.g_hicon-gl_hschar-2;
+    G.g_xyicon[6].x = G.g_wicon-xcent;
+    G.g_xyicon[6].y = G.g_hicon-gl_hschar-2;
+    G.g_xyicon[7].x = G.g_wicon-xcent;
+    G.g_xyicon[8].x = xcent;
 
     /* set up outlines for dragging files displayed as text */
-    G.g_nmtext = 5;     /* number of points */
-    memset(G.g_xytext, 0, sizeof(G.g_xytext));
-    G.g_xytext[2] = gl_wchar * DRAG_BOX_WIDTH;
-    G.g_xytext[4] = gl_wchar * DRAG_BOX_WIDTH;
-    G.g_xytext[5] = gl_hchar;
-    G.g_xytext[7] = gl_hchar;
+    bzero(G.g_xytext, sizeof(G.g_xytext));
+    G.g_xytext[1].x = gl_wchar * DRAG_BOX_WIDTH;
+    G.g_xytext[2].x = gl_wchar * DRAG_BOX_WIDTH;
+    G.g_xytext[2].y = gl_hchar;
+    G.g_xytext[3].y = gl_hchar;
 
     dos_free(buf);
 }
@@ -948,7 +1026,7 @@ static void save_to_disk(char *buf, WORD len)
         if (ret == 0L)
             break;
         /* error - prompt user */
-        if (fun_alert_string(1, STCRTFIL, filename_start(inf_file_name)) != 2)
+        if (fun_alert_merge(1, STCRTFIL, filename_start(inf_file_name)) != 2)
             return;                     /* if not retrying, return now */
     }
 
@@ -995,16 +1073,16 @@ void app_save(WORD todisk)
     char *outbuf, *inf_data, *pcurr, *ptmp;
     ANODE *pa;
     WSAVE *pws;
+    CSAVE *cnxsave = G.g_cnxsave;
 
-    /* allocate a temporary buffer */
-    outbuf = dos_alloc_anyram(SIZE_AFILE);
-    if (!outbuf)
-    {
-        KDEBUG(("insufficient memory for temporary EMUDESK.INF buffer (need %d bytes)\n",SIZE_AFILE));
-        nomem_alert();          /* infinite loop */
-    }
+    /*
+     * allocate a temporary buffer: we make it larger than the size of
+     * the shell buffer by at least the length of one line, so that we
+     * only need to check for buffer overflow at the end of each line
+     */
+    outbuf = must_alloc_buf(SIZE_SHELBUF+MAX_SIZE_INF_LINE);
 
-    shel_get(outbuf, SIZE_AFILE);
+    shel_get(outbuf, CPDATA_LEN);
     inf_data = outbuf + CPDATA_LEN;
     pcurr = inf_data;
 
@@ -1017,15 +1095,15 @@ void app_save(WORD todisk)
             pcurr += sprintf(pcurr,"#Z %02X %s@\r\n",pa->a_flags&AF_ISCRYS,pa->a_pappl);
 
     /* save environment */
-    env1 = (G.g_cnxsave.cs_view == V_TEXT) ? INF_E1_VIEWTEXT : 0x00;
-    env1 |= ((G.g_cnxsave.cs_sort) << 5) & INF_E1_SORTMASK;
-    env1 |= (G.g_cnxsave.cs_confdel) ? INF_E1_CONFDEL : 0x00;
-    env1 |= (G.g_cnxsave.cs_confcpy) ? INF_E1_CONFCPY : 0x00;
-    env1 |= G.g_cnxsave.cs_dblclick & INF_E1_DCMASK;
-    env2 = (G.g_cnxsave.cs_blitter) ? INF_E2_BLITTER : 0x00;
-    env2 |= (G.g_cnxsave.cs_confovwr) ? 0x00 : INF_E2_ALLOWOVW;
-    env2 |= (G.g_cnxsave.cs_mnuclick) ? INF_E2_MNUCLICK : 0x00;
-    switch(G.g_cnxsave.cs_datefmt)
+    env1 = (cnxsave->cs_view == V_TEXT) ? INF_E1_VIEWTEXT : 0x00;
+    env1 |= ((cnxsave->cs_sort) << 5) & INF_E1_SORTMASK;
+    env1 |= (cnxsave->cs_confdel) ? INF_E1_CONFDEL : 0x00;
+    env1 |= (cnxsave->cs_confcpy) ? INF_E1_CONFCPY : 0x00;
+    env1 |= cnxsave->cs_dblclick & INF_E1_DCMASK;
+    env2 = (cnxsave->cs_blitter) ? INF_E2_BLITTER : 0x00;
+    env2 |= (cnxsave->cs_confovwr) ? 0x00 : INF_E2_ALLOWOVW;
+    env2 |= (cnxsave->cs_mnuclick) ? INF_E2_MNUCLICK : 0x00;
+    switch(cnxsave->cs_datefmt)
     {
     case DATEFORM_IDT:
         env2 |= INF_E2_IDTDATE;
@@ -1034,7 +1112,7 @@ void app_save(WORD todisk)
         env2 |= INF_E2_DAYMONTH;
         break;
     }
-    switch(G.g_cnxsave.cs_timefmt)
+    switch(cnxsave->cs_timefmt)
     {
     case TIMEFORM_IDT:
         env2 |= INF_E2_IDTTIME;
@@ -1043,12 +1121,17 @@ void app_save(WORD todisk)
         env2 |= INF_E2_24HCLOCK;
         break;
     }
-    env2 |= sound(FALSE, 0xFFFF, 0)  ? 0x00 : INF_E2_SOUND;
     mode = desk_get_videomode();
-    env5 = (G.g_cnxsave.cs_sort == CS_NOSORT) ? INF_E5_NOSORT : 0;
+    env5 = (cnxsave->cs_sort == CS_NOSORT) ? INF_E5_NOSORT : 0;
 #if CONF_WITH_DESKTOP_CONFIG
-    env5 |= G.g_cnxsave.cs_appdir ? INF_E5_APPDIR : 0;
-    env5 |= G.g_cnxsave.cs_fullpath ? INF_E5_ISFULL : 0;
+    env5 |= cnxsave->cs_appdir ? INF_E5_APPDIR : 0;
+    env5 |= cnxsave->cs_fullpath ? INF_E5_ISFULL : 0;
+#endif
+#if CONF_WITH_SIZE_TO_FIT
+    env5 |= (cnxsave->cs_sizefit) ? 0 : INF_E5_NOSIZE;
+#endif
+#if CONF_WITH_CACHE_CONTROL
+    env5 |= (cnxsave->cs_cache) ? 0 : INF_E5_NOCACHE;
 #endif
     pcurr += sprintf(pcurr,"#E %02X %02X %02X %02X %02X\r\n",
                     env1,env2,HIBYTE(mode),LOBYTE(mode),env5);
@@ -1061,13 +1144,23 @@ void app_save(WORD todisk)
                     G.g_patcol[2].desktop,G.g_patcol[2].window);
 #endif
 
+#if CONF_WITH_DESKTOP_CONFIG
+    /* save menu item sortcuts */
+    *pcurr++ = '#';
+    *pcurr++ = 'K';
+    for (i = 0; i < NUM_SHORTCUTS; i++)
+        pcurr += sprintf(pcurr," %02X", menu_shortcuts[i]);
+    *pcurr++= '\r';
+    *pcurr++= '\n';
+#endif
+
     /* save windows */
     for (i = 0; i < NUM_WNODES; i++)
     {
-        pws = &G.g_cnxsave.cs_wnode[i];
+        pws = &cnxsave->cs_wnode[i];
         ptmp = pws->pth_save;
         pcurr += sprintf(pcurr,"#W %02X %02X %02X %02X %02X %02X %02X",
-                        0,pws->vsl_save,pws->x_save/gl_wchar,
+                        pws->hsl_save,pws->vsl_save,pws->x_save/gl_wchar,
                         pws->y_save/gl_hchar,pws->w_save/gl_wchar,
                         pws->h_save/gl_hchar,0);
         pcurr += sprintf(pcurr," %s@\r\n",(*ptmp!='@')?ptmp:"");
@@ -1116,6 +1209,11 @@ void app_save(WORD todisk)
         case AT_ISTRSH:     /* Trash */
             type = 'T';
             break;
+#if CONF_WITH_PRINTER_ICON
+        case AT_ISPRNT:     /* Printer */
+            type = 'O';
+            break;
+#endif
         default:
             type = ' ';
         }
@@ -1138,6 +1236,13 @@ void app_save(WORD todisk)
         }
         *pcurr++ = '\r';
         *pcurr++ = '\n';
+        if (pcurr-outbuf >= SIZE_SHELBUF)   /* overflow check */
+        {
+            for (pcurr -= 2; *pcurr != '\n'; pcurr--)
+                ;
+            pcurr++;        /* point after previous line */
+            break;
+        }
     }
     *pcurr = 0x00;
 
@@ -1229,7 +1334,11 @@ void app_blddesk(void)
             pa->a_obid = obid;
 
             /* choose appropriate icon */
-            icon = (pa->a_aicon < 0) ? pa->a_dicon : pa->a_aicon;
+            if ((pa->a_dicon < 0)
+             || ((pa->a_type == AT_ISFILE) && (pa->a_flags & AF_ISEXEC)))
+                icon = pa->a_aicon;
+            else
+                icon = pa->a_dicon;
 
             /* build object */
             pob = &G.g_screen[obid];
@@ -1314,3 +1423,69 @@ ANODE *app_afind_by_name(WORD atype, WORD ignore, char *pspec, char *pname, WORD
 
     return NULL;
 }
+
+
+#if CONF_WITH_READ_INF
+/*
+ *  Implements "Read .INF file" function
+ *
+ *  Returns TRUE iff file was successfully read into shell buffer
+ */
+BOOL app_read_inf(void)
+{
+    LONG rc;
+    WORD button;
+    BOOL ret = FALSE;
+    char *p, *buf;
+    char path[MAXPATHLEN], fname[LEN_ZFNAME];
+
+    /* prompt for filename */
+    strcpy(path, INF_FILE_WILD);
+    *path += G.g_stdrv;
+    strcpy(fname, INF_FILE_NAME+3);     /* excluding "X:\" */
+    p = desktop_str_addr(STRDINF);
+    rc = fsel_exinput(path, fname, &button, p);
+    if ((rc == 0) || (button == 0))
+        return FALSE;
+    strcpy(filename_start(path), fname);
+
+    /* allocate temporary buffer */
+    buf = dos_alloc_anyram(SIZE_SHELBUF);
+    if (!buf)
+    {
+        malloc_fail_alert();
+        return FALSE;
+    }
+
+    /* load in file & validate contents */
+    p = buf + CPDATA_LEN;
+    rc = dos_load_file(path, SIZE_SHELBUF-CPDATA_LEN-1, p);
+    if (rc > 0L)
+    {
+        if ((*p == '#')     /* must start with #R or #E */
+         && ((*(p+1) == 'R') || (*(p+1) == 'E')))
+            ;
+        else rc = 0L;
+        p[rc] = '\0';
+    }
+
+    if (rc > 0L)            /* still OK: merge contents into shell buffer */
+    {
+        shel_get(buf, CPDATA_LEN);
+        shel_put(buf, CPDATA_LEN+rc+1); /* also save terminating nul */
+        ret = TRUE;
+    }
+    else if (rc == EFILNF)  /* issue alert for file not found */
+    {
+        fun_alert_merge(1, STFILENF, fname);
+    }
+    else                    /* issue alert for invalid inf file */
+    {
+        fun_alert(1, STINVINF);
+    }
+
+    dos_free(buf);
+
+    return ret;
+}
+#endif

@@ -1,7 +1,7 @@
 /*
  *  initinfo.c - Info screen at startup
  *
- * Copyright (C) 2001-2018 by Authors:
+ * Copyright (C) 2001-2019 by Authors:
  *
  * Authors:
  *  MAD     Martin Doering
@@ -19,9 +19,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "nls.h"
 #include "ikbd.h"
 #include "asm.h"
@@ -34,34 +32,20 @@
 #include "xbiosbind.h"
 #include "biosext.h"
 #include "version.h"
+#include "bios.h"
 
 #include "initinfo.h"
 #include "conout.h"
-
-#ifdef ENABLE_KDEBUG
+#include "../bdos/bdosstub.h"
 #include "lineavars.h"
-#endif
 
 /* Screen width, in characters, as signed value */
 #define SCREEN_WIDTH ((WORD)v_cel_mx + 1)
 
 #if FULL_INITINFO
 
-
-/*==== Defines ============================================================*/
-
 #define INFO_LENGTH 40      /* width of info lines (must fit in low-rez) */
 #define LOGO_LENGTH 34      /* must equal length of strings in EmuTOS logo */
-
-/* allowed values for Mxalloc mode: (defined in mem.h) */
-#define MX_STRAM 0
-#define MX_TTRAM 1
-
-/*==== External declarations ==============================================*/
-
-#if CONF_WITH_ALT_RAM
-extern long total_alt_ram(void); /* in bdos/umem.c */
-#endif
 
 static const char logo[][LOGO_LENGTH+1] =
     { "11111111111 7777777777  777   7777",
@@ -301,9 +285,6 @@ WORD initinfo(ULONG *pshiftbits)
 #if WITH_CLI
     initinfo_height += 1;
 #endif
-#if CONF_WITH_AROS
-    initinfo_height += 3;
-#endif
 #if CONF_WITH_ALT_RAM
     if (altramsize > 0)
         initinfo_height += 1;
@@ -371,11 +352,6 @@ WORD initinfo(ULONG *pshiftbits)
     display_message(_("Press key 'X' to boot from X:"));
 #if WITH_CLI
     display_message(_("Press <Esc> to run an early console"));
-#endif
-#if CONF_WITH_AROS
-    cprintf("\r\n");
-    display_inverse("This binary mixes GPL and AROS APL code,",1);
-    display_inverse("redistribution is forbidden.",1);
 #endif
     cprintf("\r\n");
 

@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,10 +16,10 @@
 *       -------------------------------------------------------------
 */
 /* #define ENABLE_KDEBUG */
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesvars.h"
 #include "obdefs.h"
 
 #include "geminput.h"
@@ -29,7 +29,7 @@
 #include "gemasync.h"
 
 #include "string.h"
-#include "kprint.h"
+#include "biosext.h"
 
 
 static void signal(EVB *e)
@@ -136,7 +136,7 @@ EVSPEC iasync(WORD afunc, LONG aparm)
         panic("no free EVBs available\n");
 
     eul = e->e_nextp;
-    memset(e, 0, sizeof(EVB));
+    bzero(e, sizeof(EVB));
 
     /* add to list of events being waited for */
     e->e_nextp = rlr->p_evlist;

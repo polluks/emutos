@@ -1,7 +1,7 @@
 /*
  * delayasm.S - assembler functions for delay calibration
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -21,7 +21,6 @@
 #define MFP_IMRB    MFP_REGS+20
 #define MFP_TCDCR   MFP_REGS+28
 #define MFP_TDDR    MFP_REGS+36
-
 
         .text
 //

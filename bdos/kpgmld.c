@@ -2,7 +2,7 @@
  * kpgmld.c - program load
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2013-2017 The EmuTOS development team
+ *               2013-2019 The EmuTOS development team
  *
  * Authors:
  *  SCC  Steven C. Cavender
@@ -14,14 +14,12 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "proc.h"
 #include "gemerror.h"
 #include "pghdr.h"
 #include "string.h"
-#include "kprint.h"
 
 
 /*
@@ -29,7 +27,7 @@
  */
 
 static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd);
-static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi);
+static LONG pgfix01(UBYTE *lastcp, LONG nrelbytes, PGMINFO *pi);
 
 /*
  * kpgmhdrld - load program header
@@ -117,7 +115,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
     PGMINFO *pi;
     PD      *p;
     PGMINFO pinfo;
-    char    *cp;
+    UBYTE   *cp;
     LONG    relst;
     LONG    flen;
     LONG    r;
@@ -135,7 +133,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
     pi->pi_blen = hd->h01_blen;
     pi->pi_slen = hd->h01_slen;
     pi->pi_tpalen = p->p_hitpa - p->p_lowtpa - sizeof(PD);
-    pi->pi_tbase = (char *) (p+1);      /*  1st byte after PD   */
+    pi->pi_tbase = (UBYTE *) (p+1);     /*  1st byte after PD   */
     pi->pi_bbase = pi->pi_tbase + flen;
     pi->pi_dbase = pi->pi_tbase + pi->pi_tlen;
 
@@ -154,65 +152,65 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
 
     /*
      * read in the program file (text and data)
-     * if there is an error reading in the file or if it is an abs
-     * file, then we are finished
      */
 
     r = xread(h,flen,pi->pi_tbase);
     if (r < 0)
         return r;
 
-    if (hd->h01_abs)
-        return 0;           /* do we need to clr bss here? */
-
-    /*
-     * if not an absolute format, position past the symbols and start
-     * the reloc pointer (flen is tlen + dlen).
-     */
-
-    /**********  should change hard coded 0x1c  ******************/
-
-    KDEBUG(("BDOS pgmld01: flen=0x%lx, pi_slen=0x%lx\n",flen,pi->pi_slen));
-
-    r = xlseek(flen+pi->pi_slen+0x1c,h,0);
-    if (r < 0L)
-        return r;
-
-    r = xread(h,(long)sizeof(relst),&relst);
-
-    KDEBUG(("BDOS pgmld01: relst=0x%lx\n",relst));
-
-    if (r < 0L)
-        return r;
-
-    if (relst != 0)
+    if (!hd->h01_abs)
     {
-        cp = pi->pi_tbase + relst;
 
-        /*  make sure we didn't wrap memory or overrun the bss  */
+        /*
+         * if not an absolute format, position past the symbols and start
+         * the reloc pointer (flen is tlen + dlen).
+         */
 
-        if ((cp < pi->pi_tbase) || (cp >= pi->pi_bbase))
-            return EPLFMT;
+        /**********  should change hard coded 0x1c  ******************/
 
-        *((long *)(cp)) += (long)pi->pi_tbase ; /*  1st fixup     */
+        KDEBUG(("BDOS pgmld01: flen=0x%lx, pi_slen=0x%lx\n",flen,pi->pi_slen));
 
-        flen = (long)p->p_hitpa - (long)pi->pi_bbase;   /* M01.01.0925.01 */
+        r = xlseek(flen+pi->pi_slen+0x1c,h,0);
+        if (r < 0L)
+            return r;
 
-        for ( ; ; )
+        r = xread(h,(long)sizeof(relst),&relst);
+
+        KDEBUG(("BDOS pgmld01: relst=0x%lx\n",relst));
+
+        if (r < 0L)
+            return r;
+
+        if (relst != 0)
         {
-            /*  read in more relocation info  */
-            r = xread(h,flen,pi->pi_bbase);
-            if (r <= 0)
-                break;
+            cp = pi->pi_tbase + relst;
 
-            /*  do fixups using that info  */
-            r = pgfix01(cp, r, pi);
-            if (r <= 0)
-                break;
+            /*  make sure we didn't wrap memory or overrun the bss  */
+
+            if ((cp < pi->pi_tbase) || (cp >= pi->pi_bbase))
+                return EPLFMT;
+
+            *((long *)(cp)) += (long)pi->pi_tbase ; /*  1st fixup     */
+
+            flen = (long)p->p_hitpa - (long)pi->pi_bbase;   /* M01.01.0925.01 */
+
+            for ( ; ; )
+            {
+                /*  read in more relocation info  */
+                r = xread(h,flen,pi->pi_bbase);
+                if (r <= 0)
+                    break;
+
+                /*  do fixups using that info  */
+                r = pgfix01(cp, r, pi);
+                if (r <= 0)
+                    break;
+            }
+
+            if (r < 0)                      /* M01.01.1023.01 */
+                return r;
         }
 
-        if (r < 0)                      /* M01.01.1023.01 */
-            return r;
     }
 
     /* clear the bss or the whole heap */
@@ -248,7 +246,7 @@ static LONG pgmld01(FH h, PD *pdptr, PGMHDR01 *hd)
  *  pi        - program info pointer
  */
 
-static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi)
+static LONG pgfix01(UBYTE *lastcp, LONG nrelbytes, PGMINFO *pi)
 {
     UBYTE *cp;              /*  code pointer                */
     UBYTE *rp;              /*  relocation info pointer     */
@@ -257,10 +255,10 @@ static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi)
     LONG  tbase;            /*  base addr of text segment   */
 
     cp = lastcp;
-    rp = (UBYTE *)pi->pi_bbase;
+    rp = pi->pi_bbase;
     n = nrelbytes;
     tbase = (LONG)pi->pi_tbase;
-    bbase = (UBYTE *)pi->pi_bbase;
+    bbase = pi->pi_bbase;
 
     while(n-- && (*rp != 0))
     {
@@ -284,7 +282,7 @@ static LONG pgfix01(void *lastcp, LONG nrelbytes, PGMINFO *pi)
 #if DETECT_NATIVE_FEATURES
 LONG kpgm_relocate(PD *p, long length)
 {
-    char    *cp;
+    UBYTE   *cp;
     LONG    *rp;
     LONG    flen;
     PGMINFO pinfo;
@@ -305,7 +303,7 @@ LONG kpgm_relocate(PD *p, long length)
     pi->pi_blen = hd->h01_blen;
     pi->pi_slen = hd->h01_slen;
     pi->pi_tpalen = p->p_hitpa - p->p_lowtpa - sizeof(PD);
-    pi->pi_tbase = (char *)(p+1);       /*  1st byte after PD   */
+    pi->pi_tbase = (UBYTE *)(p+1);      /*  1st byte after PD   */
     pi->pi_bbase = pi->pi_tbase + flen;
     pi->pi_dbase = pi->pi_tbase + pi->pi_tlen;
 
@@ -333,27 +331,27 @@ LONG kpgm_relocate(PD *p, long length)
 
     memcpy(&p->p_tbase, &pi->pi_tbase, 6*sizeof(long));
 
-    if (abs_flag)
-        return 0;
-
-    /* relocation information present */
-    rp = (LONG*) (pi->pi_tbase+2+sizeof(PGMHDR01)+flen+pi->pi_slen);
-    if (*rp)
+    if (!abs_flag)
     {
-        cp = pi->pi_tbase + *rp++;
+        /* relocation information present */
+        rp = (LONG*) (pi->pi_tbase+2+sizeof(PGMHDR01)+flen+pi->pi_slen);
+        if (*rp)
+        {
+            cp = pi->pi_tbase + *rp++;
 
-        /*  make sure we didn't wrap memory or overrun the bss  */
-        if ((cp < pi->pi_tbase) || (cp >= pi->pi_bbase))
-            return EPLFMT;
+            /*  make sure we didn't wrap memory or overrun the bss  */
+            if ((cp < pi->pi_tbase) || (cp >= pi->pi_bbase))
+                return EPLFMT;
 
-        *((long *)(cp)) += (long)pi->pi_tbase;  /*  1st fixup     */
+            *((long *)(cp)) += (long)pi->pi_tbase;  /*  1st fixup     */
 
-        /* move the relocation info to the pi_bbase */
-        length -= ((long)rp) - (long)pi->pi_tbase;
-        memmove(pi->pi_bbase, rp, length);
+            /* move the relocation info to the pi_bbase */
+            length -= ((long)rp) - (long)pi->pi_tbase;
+            memmove(pi->pi_bbase, rp, length);
 
-        /* fixup with the reloc information available */
-        pgfix01(cp, length, pi);
+            /* fixup with the reloc information available */
+            pgfix01(cp, length, pi);
+        }
     }
 
     /* clear the whole heap */

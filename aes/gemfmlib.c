@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,13 +16,15 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "aesvars.h"
 #include "obdefs.h"
 #include "gem_rsc.h"
+#include "biosbind.h"
 
 #include "gemwmlib.h"
 #include "gemrslib.h"
@@ -121,7 +123,7 @@ static WORD find_obj(OBJECT *tree, WORD start_obj, WORD which)
     {
     case BACKWARD:
         inc = -1;
-        /* fall thru */
+        FALLTHROUGH;
     case FORWARD:
         obj = start_obj + inc;
         break;
@@ -259,8 +261,7 @@ WORD fm_button(OBJECT *tree, WORD new_obj, WORD clks, WORD *pnew_obj)
         cont = FALSE;
 
     /* handle click on another editable field */
-    if (cont &&
-        ((flags & HIDETREE) || (state & DISABLED) || !(flags & EDITABLE)))
+    if (cont && !(flags & EDITABLE))
         new_obj = 0;
 
     *pnew_obj = new_obj | orword;
@@ -324,7 +325,7 @@ WORD fm_do(OBJECT *tree, WORD start_fld)
             next_obj = ob_find(tree, ROOT, MAX_DEPTH, rets[0], rets[1]);
             if (next_obj == NIL)
             {
-                sound(TRUE, 440, 2);
+                Bconout(2, 0x07);   /* bell sound */
                 next_obj = 0;
             }
             else

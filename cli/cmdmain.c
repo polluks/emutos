@@ -1,7 +1,7 @@
 /*
  * EmuCON2: a command processor for EmuTOS
  *
- * Copyright (C) 2013-2018 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -22,7 +22,7 @@
  *      no input redirection or pipes
  */
 #include "cmd.h"
-#include <version.h>
+#include "version.h"
 
 /*
  *  global variables
@@ -31,7 +31,7 @@ LONG idt_value;
 UWORD screen_cols, screen_rows;
 WORD current_res, requested_res;
 WORD linewrap;
-WORD nflops;
+WORD nflops_copy;
 DTA *dta;
 char user_path[MAXPATHLEN];
 LONG redir_handle;
@@ -55,7 +55,7 @@ PRIVATE WORD execute(WORD argc,char **argv,char *redir);
 PRIVATE WORD get_nflops(void);
 PRIVATE void strip_quotes(int argc,char **argv);
 
-extern int cmdmain(void); /* called only from cmdasm.S */
+int cmdmain(void);      /* called only from cmdasm.S */
 
 int cmdmain(void)
 {
@@ -76,7 +76,7 @@ WORD argc, rc;
 #endif
     current_res = original_res;
 
-    nflops = Supexec(get_nflops);           /* number of floppy drives */
+    nflops_copy = Supexec(get_nflops);      /* number of floppy drives */
 
     /*
      * start up in ST medium if we are currently in ST low
@@ -215,14 +215,17 @@ PRIVATE void change_res(WORD res)
 #else
     /* mode changed *without* palette change -> set readable text color index */
     {
-        /* OS masks color index, so 15 is fine also for mono modes */
-        int idx = 15;
-        /* from first 4 entries in LOW palette, red is better than yellow */
+        static int old_color_3 = -1;
+        /* switching to ST medium: set color 3 to black */
         if (res == ST_MEDIUM)
-            idx = 1;
+            old_color_3 = Setcolor(3, 0);
+        /* switching from ST medium: reset color 3 */
+        if (current_res == ST_MEDIUM && old_color_3 != -1)
+            Setcolor(3, old_color_3);
         conout(ESC);    /* with VT52 command */
         conout('b');    /* b=foreground, c=background */
-        conout(idx);
+        /* OS masks color index, so 15 is fine also for mono/medium modes */
+        conout(15);
     }
 #endif
     enable_cursor();
@@ -251,7 +254,7 @@ int valid_res(WORD res)
     case ST_HIGH:
         if (vdo_value != _VDO_TT)
             return FALSE;
-        /* fall through */
+        FALLTHROUGH;
 #endif  /* CONF_WITH_TT_SHIFTER */
     case ST_LOW:
     case ST_MEDIUM:

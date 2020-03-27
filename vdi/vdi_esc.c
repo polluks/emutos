@@ -1,7 +1,7 @@
 /*
  * vdi_esc.c - GSX escapes for the VDI screen driver
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -9,20 +9,16 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "vdi_defs.h"
-#include "../bios/lineavars.h"
+#include "lineavars.h"
 #include "asm.h"
-#include "kprint.h"
+#include "bdosbind.h"
 
 
 /* Local Constants */
 
 #define ldri_escape             19      /* last DRI escape = 19. */
-
-#define X_RAWIO  0x06
-#define X_CONWS  0x09
 
 
 /*
@@ -30,7 +26,7 @@
  */
 static LONG crawio(WORD ch)
 {
-    return trap1(X_RAWIO,ch);
+    return Crawio(ch);
 }
 
 
@@ -39,7 +35,7 @@ static LONG crawio(WORD ch)
  */
 static void cconws(char *string)
 {
-    trap1(X_CONWS, string);
+    Cconws(string);
 }
 
 
@@ -69,11 +65,18 @@ static void escfn1(Vwk * vwk)
 
 /*
  * escfn2: v_exit_cur() - exit alpha mode and enter graphics mode
+ *
+ * note: if the last thing a program does before entering graphics mode
+ * is to write an Esc to the console, the first character of the sequence
+ * below will be eaten (and ignored).  concretely, this is most likely
+ * to happen when a .TOS/.TTP program exits to the desktop.
+ *
+ * to circumvent this, we send a harmless escape sequence before we hide
+ * the alpha cursor.
  */
 static void escfn2(Vwk * vwk)
 {
-    cconws("\033f\033E");       /* hide alpha cursor */
-    vdi_v_clrwk(vwk);
+    cconws("\033H\033f\033E");  /* home, hide alpha cursor, then clear-and-home */
 }
 
 
@@ -82,8 +85,7 @@ static void escfn2(Vwk * vwk)
  */
 static void escfn3(Vwk * vwk)
 {
-    vdi_v_clrwk(vwk);
-    cconws("\033E\033e");       /* show alpha cursor */
+    cconws("\033E\033e");       /* clear-and-home, then show alpha cursor */
 }
 
 

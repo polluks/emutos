@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,20 +19,21 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
 
 #include "obdefs.h"
 #include "struct.h"
-#include "basepage.h"
-#include "pd.h"
-#include "dos.h"
+#include "aesvars.h"
+#include "bdosbind.h"
+#include "xbiosbind.h"
 #include "gemerror.h"
-#include "aespub.h"
+#include "aesdefs.h"
+#include "aesext.h"
 #include "gemlib.h"
 #include "gem_rsc.h"
 #include "biosext.h"
+#include "optimize.h"
 
 #include "gemdosif.h"
 #include "gemdos.h"
@@ -47,9 +48,13 @@
 #include "gemmnlib.h"
 
 #include "string.h"
-#include "kprint.h"             /* for debugging */
 
 #include "gemshlib.h"
+#include "../desk/deskstub.h"
+
+#if WITH_CLI
+#include "../cli/clistub.h"
+#endif
 
 /*
  * clear screen value for ob_spec:
@@ -57,19 +62,32 @@
  */
 #define CLEAR_SCREEN    ((WHITE<<12) | (WHITE<< 8) | (IP_HOLLOW<<4) | WHITE)
 
-#define SIZE_AFILE 2048                 /* size of AES shell buffer: must   */
-                                        /*  agree with #define in deskapp.h */
 
-static char shelbuf[SIZE_AFILE];        /* AES shell buffer */
+/*
+ * values used in sh_nextapp below
+ */
+#define NORMAL_APP  0
+#define CONSOLE_APP 1
+#define AUTORUN_APP 2
+#define DESKTOP_APP 3
 
-GLOBAL SHELL sh[NUM_PDS];
+typedef struct
+{
+    WORD sh_doexec;             /* for values, see aesdefs.h */
+    WORD sh_nextapp;            /* type of application to be run next (see above) */
+    BOOL sh_isgem;              /* TRUE if the application to be run is a GEM */
+                                /*  application; FALSE if character-mode      */
+    char sh_desk[LEN_ZFNAME];   /* the name of the default startup app */
+    char sh_cdir[LEN_ZPATH];    /* the current directory for the default startup app */
+} SHELL;
 
-static char sh_apdir[LEN_ZPATH];        /* holds directory of applications to be */
-                                        /* run from desktop.  GEMDOS resets dir  */
-                                        /* to parent's on return from exec.      */
+static SHELL sh;
+
+static char sh_apdir[LEN_ZPATH];        /* saves initial value of current directory */
+                                        /* for applications run from the desktop.   */
 GLOBAL char *ad_stail;
 
-GLOBAL WORD gl_shgem;
+static BOOL gl_shgem;                   /* TRUE iff currently in graphics mode */
 
 /*
  *  Resolution settings:
@@ -79,14 +97,6 @@ GLOBAL WORD gl_shgem;
 GLOBAL WORD gl_changerez;
 GLOBAL WORD gl_nextrez;
 
-/* Prototypes: */
-extern void deskstart(void) NORETURN;   /* see ../desk/deskstart.S */
-#if WITH_CLI != 0
-extern void coma_start(void) NORETURN;  /* see cli/cmdasm.S */
-#endif
-
-static void sh_toalpha(void);
-
 
 void sh_read(char *pcmd, char *ptail)
 {
@@ -95,7 +105,7 @@ void sh_read(char *pcmd, char *ptail)
 }
 
 
-void sh_curdir(char *ppath)
+static void sh_curdrvdir(char *ppath)
 {
     WORD drive;
 
@@ -145,30 +155,30 @@ void sh_curdir(char *ppath)
  */
 WORD sh_write(WORD doex, WORD isgem, WORD isover, const char *pcmd, const char *ptail)
 {
-    SHELL *psh = &sh[rlr->p_pid];
+    SHELL *psh = &sh;
 
     switch(doex) {
     case SHW_NOEXEC:    /* exit to desktop */
         strcpy(D.s_cmd, DEF_DESKTOP);
         psh->sh_doexec = doex;
-        psh->sh_dodef = TRUE;
-        psh->sh_isdef = TRUE;
+        psh->sh_nextapp = DESKTOP_APP;
         psh->sh_isgem = TRUE;
         break;
     case SHW_EXEC:      /* run another program */
         strcpy(D.s_cmd, pcmd);
         memcpy(ad_stail, ptail, CMDTAILSIZE);
-        sh_curdir(sh_apdir);    /* save app's current directory */
         psh->sh_doexec = doex;
-        psh->sh_dodef = FALSE;
+        psh->sh_nextapp = (strcmp(pcmd, DEF_CONSOLE) == 0) ? CONSOLE_APP : NORMAL_APP;
         psh->sh_isgem = (isgem != FALSE);
+        if (psh->sh_nextapp == NORMAL_APP)
+            sh_curdrvdir(sh_apdir);     /* save app's current directory */
         break;
 #if CONF_WITH_SHUTDOWN
     case SHW_SHUTDOWN:  /* shutdown system */
         if (can_shutdown())
         {
             psh->sh_doexec = doex;
-            psh->sh_dodef = FALSE;
+            psh->sh_nextapp = NORMAL_APP;   /* irrelevant, I think */
             psh->sh_isgem = FALSE;
         }
         break;
@@ -186,22 +196,22 @@ WORD sh_write(WORD doex, WORD isgem, WORD isover, const char *pcmd, const char *
 
 
 /*
- *  Used by the DESKTOP to recall SIZE_AFILE bytes worth of previously
+ *  Used by the DESKTOP to recall up to SIZE_SHELBUF bytes worth of previously
  *  'put' desktop-context information.
  */
 void sh_get(void *pbuffer, WORD len)
 {
-    memcpy(pbuffer,shelbuf,len);
+    memcpy(pbuffer, D.g_shelbuf, len);
 }
 
 
 /*
- *  Used by the DESKTOP to save away SIZE_AFILE bytes worth of desktop-
+ *  Used by the DESKTOP to save up to SIZE_SHELBUF bytes worth of desktop-
  *  context information.
  */
 void sh_put(const void *pdata, WORD len)
 {
-    memcpy(shelbuf,pdata,len);
+    memcpy(D.g_shelbuf, pdata, len);
 }
 
 
@@ -288,71 +298,52 @@ static void sh_show(const char *lcmd)
 
 
 /*
- *  Routine to take a full path, and scan back from the end to
- *  find the starting byte of the particular filename
+ *  Return a pointer to the start of the filename in a path
+ *  (assumed to be the last component of the path)
  */
 char *sh_name(char *ppath)
 {
-    char *pname;
+    char *pname = ppath;
 
-    pname = &ppath[strlen(ppath)];
-    while((pname >= ppath) && (*pname != '\\') && (*pname != ':'))
-        pname--;
-    pname++;
+    /*
+     * note: filename_start() assumes that there is a filename separator
+     * within the path, so we handle a path like X:AAAAAAAA.BBB before
+     * calling the general function
+     */
+    if (ppath[0] && (ppath[1] == ':'))
+        pname += 2;
 
-    return pname;
+    return filename_start(pname);
 }
 
 
 /*
- *  Search for a particular string in the DOS environment and return
- *  a long pointer to the character after the string if it is found.
- *  Otherwise, return a NULL pointer
+ *  Search for a particular string in the DOS environment and return a
+ *  value in the pointer pointed to by the first argument.  If the string
+ *  is found, the value is a pointer to the first character after the
+ *  string; otherwise it is a NULL pointer.
  */
 void sh_envrn(char **ppath, const char *psrch)
 {
-    char *lp;
-    WORD len, findend;
-    char last, tmp, loc1[10], loc2[10];
+    char *p;
+    WORD len;
 
+    len = strlen(psrch);
+    *ppath = NULL;
 
-    len = strlencpy(loc2, psrch);
-    len--;
-
-    loc1[len] = '\0';
-
-    lp = ad_envrn;
-    findend = FALSE;
-    tmp = '\0';
-    do
+    /*
+     * scan environment string until double nul
+     */
+    for (p = ad_envrn; *p; )
     {
-        last = tmp;
-        tmp = *lp++;
-        if (findend && (tmp == '\0'))
+        if (strncmp(p, psrch, len) == 0)
         {
-            findend = FALSE;
-            tmp = 0xFF;
+            *ppath = p + len;
+            break;
         }
-        else
-        {
-            if (((last == '\0') || (last == -1)) && (tmp == loc2[0]))
-            {
-                memcpy(loc1, lp, len);
-                if (strcmp(&loc1[0], &loc2[1]) == 0)
-                {
-                    lp += len;
-                    break;
-                }
-            }
-            else
-                findend = TRUE;
-        }
-    } while(tmp);
-
-    if (!tmp)
-        lp = 0x0L;
-
-    *ppath = lp;
+        while(*p++) /* skip to end of current env variable */
+            ;
+    }
 }
 
 
@@ -426,7 +417,7 @@ static WORD findfile(char *pspec)
     {
         strcpy(D.g_work, rlr->p_appdir);
         strcat(D.g_work, pname);
-        if (dos_sfirst(D.g_work, F_RDONLY | F_SYSTEM) == 0) /* found */
+        if (dos_sfirst(D.g_work, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
         {
             strcpy(pspec, D.g_work);
             KDEBUG(("sh_find(1): returning pspec='%s'\n",pspec));
@@ -436,7 +427,7 @@ static WORD findfile(char *pspec)
 
     /* (2) search in the current directory */
     strcpy(D.g_work, pspec);
-    if (dos_sfirst(D.g_work, F_RDONLY | F_SYSTEM) == 0) /* found */
+    if (dos_sfirst(D.g_work, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
     {
         KDEBUG(("sh_find(2): returning pspec='%s'\n",pspec));
         return 1;
@@ -445,7 +436,7 @@ static WORD findfile(char *pspec)
     /* (3) search in the root directory of the current drive */
     D.g_work[0] = '\\';
     strcpy(D.g_work+1, pname);
-    if (dos_sfirst(D.g_work, F_RDONLY | F_SYSTEM) == 0) /* found */
+    if (dos_sfirst(D.g_work, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
     {
         strcpy(pspec, D.g_work);
         KDEBUG(("sh_find(3): returning pspec='%s'\n",pspec));
@@ -467,7 +458,7 @@ static WORD findfile(char *pspec)
         path = sh_path(path, D.g_work, pname);
         if (!path)                  /* end of PATH= */
             break;
-        if (dos_sfirst(D.g_work, F_RDONLY | F_SYSTEM) == 0) /* found */
+        if (dos_sfirst(D.g_work, FA_RO | FA_HIDDEN | FA_SYSTEM) == 0)   /* found */
         {
             strcpy(pspec, D.g_work);
             KDEBUG(("sh_find(4): returning pspec='%s'\n",pspec));
@@ -498,9 +489,7 @@ WORD sh_find(char *pspec)
  */
 void sh_rdef(char *lpcmd, char *lpdir)
 {
-    SHELL *psh;
-
-    psh = &sh[rlr->p_pid];
+    SHELL *psh = &sh;
 
     strcpy(lpcmd, psh->sh_desk);
     strcpy(lpdir, psh->sh_cdir);
@@ -513,9 +502,7 @@ void sh_rdef(char *lpcmd, char *lpdir)
  */
 void sh_wdef(const char *lpcmd, const char *lpdir)
 {
-    SHELL *psh;
-
-    psh = &sh[rlr->p_pid];
+    SHELL *psh = &sh;
 
     strcpy(psh->sh_desk, lpcmd);
     strcpy(psh->sh_cdir, lpdir);
@@ -535,15 +522,20 @@ static void sh_chgrf(SHELL *psh)
 }
 
 
-static void sh_chdef(SHELL *psh,BOOL isgem)
+static void sh_chdef(SHELL *psh)
 {
     int n;
 
-    psh->sh_isdef = FALSE;
-    if (psh->sh_dodef)
-    {
-        psh->sh_isdef = TRUE;
-        psh->sh_isgem = isgem;  /* FALSE iff a character-mode autorun program */
+    switch(psh->sh_nextapp) {
+    case NORMAL_APP:
+        if (sh_apdir[1] == ':')     /* set default drive (if specified) */
+            dos_sdrv(sh_apdir[0] - 'A');
+        dos_chdir(sh_apdir);        /* and default directory */
+        break;
+    case CONSOLE_APP:
+        break;
+    case AUTORUN_APP:
+    case DESKTOP_APP:
         if (psh->sh_cdir[1] == ':')
             dos_sdrv(psh->sh_cdir[0] - 'A');
         dos_chdir(psh->sh_cdir);
@@ -552,7 +544,7 @@ static void sh_chdef(SHELL *psh,BOOL isgem)
          * if not the default desktop, build a fully-qualified name
          */
         n = 0;
-        if (strcmp(psh->sh_desk, DEF_DESKTOP) != 0)
+        if (psh->sh_nextapp == AUTORUN_APP)
         {
             strcpy(D.s_cmd, psh->sh_cdir);
             n = strlen(D.s_cmd);
@@ -560,12 +552,7 @@ static void sh_chdef(SHELL *psh,BOOL isgem)
                 D.s_cmd[n++] = '\\';
         }
         strcpy(D.s_cmd+n, psh->sh_desk);
-    }
-    else
-    {
-        if (sh_apdir[1] == ':')
-            dos_sdrv(sh_apdir[0] - 'A');    /* desktop's def. dir   */
-        dos_chdir(sh_apdir);
+        break;
     }
 }
 
@@ -575,8 +562,8 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
     PD *pd;     /* this is the BDOS PD structure, not the AESPD */
 
     /* Create a basepage with the standard Pexec() */
-    pd = (PD *) trap1_pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
-    pd->p_tbase = (char *) entry;
+    pd = (PD *) Pexec(PE_BASEPAGEFLAGS, (char*)PF_STANDARD, "", NULL);
+    pd->p_tbase = (UBYTE *) entry;
 
     /* Run the program with dos_exec() for AES reentrancy issues */
     return dos_exec(PE_GOTHENFREE, NULL, (const char *)pd, NULL);
@@ -585,6 +572,7 @@ LONG aes_run_rom_program(PRG_ENTRY *entry)
 
 static void set_default_desktop(SHELL *psh)
 {
+    psh->sh_nextapp = DESKTOP_APP;
     psh->sh_isgem = TRUE;
     strcpy(psh->sh_desk, DEF_DESKTOP);
     strcpy(psh->sh_cdir, D.s_cdir);
@@ -596,8 +584,10 @@ static WORD sh_ldapp(SHELL *psh)
     char *fname = sh_name(D.s_cmd);     /* filename portion of program */
     LONG ret;
 
-    KDEBUG(("sh_ldapp: Starting %s, sh_isgem=%d\n",D.s_cmd,psh->sh_isgem));
-    if (psh->sh_isdef && strcmp(D.s_cmd, DEF_DESKTOP) == 0)
+    KDEBUG(("sh_ldapp: Starting %s, sh_nextapp=%d, sh_isgem=%d\n",
+            D.s_cmd,psh->sh_nextapp,psh->sh_isgem));
+
+    if (psh->sh_nextapp == DESKTOP_APP)
     {
         /* Start the ROM desktop: */
         sh_show("");        /* like TOS, we don't display a name */
@@ -611,29 +601,37 @@ static WORD sh_ldapp(SHELL *psh)
         return 0;
     }
 
-#if WITH_CLI != 0
-    if (strcmp(D.s_cmd, "EMUCON") == 0)
+#if WITH_CLI
+    if (psh->sh_nextapp == CONSOLE_APP)
     {
         /* start the EmuCON shell: */
         aes_run_rom_program(coma_start);
+        psh->sh_nextapp = DESKTOP_APP;
+        psh->sh_isgem = TRUE;
         return 0;
     }
 #endif
 
     /*
-     * we are now going to run a normal application, possibly via
-     * autorun.  if it's being run via autorun, sh_isdef will be TRUE,
-     * and we should *not* invoke sh_find().  otherwise we do, and
-     * only attempt to run the application if it's found.
+     * we are now going to run a normal application, possibly via autorun.
+     * if it's being run via autorun, we should *not* invoke sh_find().
+     * otherwise we do, and only attempt to run the application if it's found.
      */
-    ret = (psh->sh_isdef) ? 1 : sh_find(D.s_cmd);
+    ret = (psh->sh_nextapp == AUTORUN_APP) ? 1 : sh_find(D.s_cmd);
     if (ret)
     {
-        /* Run a normal application: */
+        /* Run a normal or autorun application: */
         sh_show(fname);
         p_nameit(rlr, fname);
         p_setappdir(rlr, D.s_cmd);
         rlr->p_flags = 0;
+
+        /* by default, run the desktop after a normal application */
+        if (psh->sh_nextapp == NORMAL_APP)
+        {
+            psh->sh_nextapp = DESKTOP_APP;
+            psh->sh_isgem = TRUE;
+        }
 
         ret = dos_exec(PE_LOADGO, D.s_cmd, ad_stail, ad_envrn); /* Run the APP */
 
@@ -652,9 +650,9 @@ static WORD sh_ldapp(SHELL *psh)
         /* If the user ran an "autorun" application and quitted it,
          * return now to the default desktop
          */
-        if (psh->sh_isdef && psh->sh_dodef)
+        if (psh->sh_nextapp == AUTORUN_APP)
         {
-            KDEBUG(("sh_ldapp: Returning to ROM desktop!\n"));
+            KDEBUG(("sh_ldapp: autorun program returning to ROM desktop\n"));
             set_default_desktop(psh);
         }
 
@@ -666,7 +664,7 @@ static WORD sh_ldapp(SHELL *psh)
          * we call wind_new() to do a general cleanup - but only
          * if we were running in graphics mode
          */
-        if (psh->sh_isgem)
+        if (gl_shgem)
             wm_new();
 
         KDEBUG(("sh_ldapp: %s exited with rc=%ld\n",D.s_cmd,ret));
@@ -690,16 +688,19 @@ static WORD sh_ldapp(SHELL *psh)
 }
 
 
-void sh_main(BOOL isgem)
+void sh_main(BOOL isauto, BOOL isgem)
 {
     WORD rc = 0;
-    SHELL *psh;
+    SHELL *psh = &sh;
 
-    psh = &sh[rlr->p_pid];
+    psh->sh_doexec = SHW_EXEC;
+    psh->sh_nextapp = isauto ? AUTORUN_APP : DESKTOP_APP;
+    psh->sh_isgem = isgem;              /* may be character mode if autorun */
     strcpy(sh_apdir, D.s_cdir);         /* initialize sh_apdir  */
+    gl_shgem = TRUE;
 
-    /* Set default DESKTOP if there isn't any yet */
-    if (psh->sh_desk[0] == '\0')
+    /* Set default DESKTOP if no autorun app */
+    if (psh->sh_nextapp == DESKTOP_APP)
         set_default_desktop(psh);
 
     /*
@@ -707,13 +708,7 @@ void sh_main(BOOL isgem)
      */
     do
     {
-        sh_chdef(psh,isgem);
-        /*
-         * set up to run the default app, i.e. the desktop, immediately
-         * after this one, and make sure it's started in graphics mode
-         */
-        psh->sh_dodef = TRUE;
-        isgem = TRUE;
+        sh_chdef(psh);
         sh_chgrf(psh);                  /* set alpha/graphics mode */
 
         if (gl_shgem)

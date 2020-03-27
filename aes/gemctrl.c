@@ -5,7 +5,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -18,10 +18,10 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesvars.h"
 #include "obdefs.h"
 
 #include "geminput.h"
@@ -84,14 +84,28 @@ static void ct_msgup(WORD message, AESPD *owner, WORD wh, WORD m1, WORD m2, WORD
     ap_sendmsg(appl_msg, message, owner, wh, m1, m2, m3, m4);
 
     /*
-     * wait for button to come up if not an arrowed message
+     * if arrowed message, or close on a hotclose window, return immediately
      */
-    if ( message != WM_ARROWED &&
-       ( message != WM_CLOSED && !(D.w_win[wh].w_kind & HOTCLOSE) ) )
-    {
-        while( (button & 0x0001) != 0x0 )
-            dsptch();
+    switch(message) {
+    case WM_ARROWED:
+        return;
+        break;
+    case WM_CLOSED:
+#if CONF_WITH_PCGEM
+        if (D.w_win[wh].w_kind & HOTCLOSE)
+        {
+            button = 0;     /* we fake button up, otherwise a slow click will */
+            return;         /*  cause us to stay in ctlmgr(), eating keys     */
+        }
+#endif
+        break;
     }
+
+    /*
+     * otherwise, wait for the button to come up
+     */
+    while(button & 0x0001)
+        dsptch();
 }
 
 
@@ -138,12 +152,14 @@ static void hctl_window(WORD w_handle, WORD mx, WORD my)
         switch(cpt)
         {
         case W_CLOSER:
+#if CONF_WITH_PCGEM
             if ( kind & HOTCLOSE )
             {
                 message = WM_CLOSED;
                 break;
             }
-            /* else fall thru */
+            FALLTHROUGH;
+#endif
         case W_FULLER:
             if ( gr_watchbox(gl_awind, cpt, SELECTED, NORMAL) )
             {
@@ -198,7 +214,7 @@ static void hctl_window(WORD w_handle, WORD mx, WORD my)
                 if ( !(my < pt.g_y) )
                     cpt += 1;
             }
-            /* fall thru */
+            FALLTHROUGH;
         case W_UPARROW:
         case W_DNARROW:
         case W_LFARROW:
@@ -323,8 +339,8 @@ void ctlmgr(void)
         w_setactive();
         /*
          * wait for something to happen, keys need to be eaten
-         * inc. fake key sent by ... or if button already down,
-         * then let other guys run then do it
+         * including fake key sent by mn_bar() [the menu bar handler]
+         * ... or if button already down, let other guys run then do it
          */
         if (button)
         {

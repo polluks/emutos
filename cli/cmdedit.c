@@ -1,7 +1,7 @@
 /*
  * EmuCON2 command history handling
  *
- * Copyright (C) 2013-2018 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -10,8 +10,8 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#include <scancode.h>
-#include <string.h>
+#include "scancode.h"
+#include "string.h"
 
 /*
  *  local to this set of functions
@@ -19,6 +19,8 @@
 LOCAL WORD linesize;
 LOCAL WORD history_num;
 LOCAL char *history_line[HISTORY_SIZE];
+LOCAL char *insert;     /* saves insertion point for tab completion */
+LOCAL char fsfbuf[MAXPATHLEN];  /* saves Fsfirst() string for tab completion */
 
 /*
  *  function prototypes
@@ -28,6 +30,7 @@ PRIVATE WORD edit_line(char *line,WORD *pos,WORD *len,WORD scancode,WORD prevcod
 PRIVATE void erase_line(char *start,WORD len);
 PRIVATE LONG getfirstnondot(const char *buffer,WORD executable_only);
 PRIVATE LONG getnextfile(WORD executable_only);
+PRIVATE char *insertion_point(char *start);
 PRIVATE WORD next_history(char *line);
 PRIVATE WORD next_word_count(const char *line,WORD pos,WORD len);
 PRIVATE WORD previous_history(char *line);
@@ -42,13 +45,14 @@ char c;
 UWORD save_history_num;
 WORD scancode, prevcode = 0;
 WORD pos = 0, len = 0;
-char prompt[] = "X:";
+char prompt[MAXPATHLEN];
 
     save_history_num = history_num;     /* so that edit_line() can play with it */
 
     prompt[0] = Dgetdrv() + 'A';
+    prompt[1] = ':';
+    get_path(prompt+2);
     message(prompt);
-    pathout_base();
     message(">");
     while(1) {
         charcode = conin();
@@ -192,10 +196,9 @@ void save_history(const char *line)
  */
 PRIVATE WORD edit_line(char *line,WORD *pos,WORD *len,WORD scancode,WORD prevcode)
 {
-char buffer[MAXPATHLEN];
 char *start, *p, *q;
 LONG rc;
-WORD n, shift = 0;
+WORD n, word = 0;
 
     switch(scancode) {
     case ARROW_UP:
@@ -210,22 +213,24 @@ WORD n, shift = 0;
             *pos = *len = next_history(line);
         }
         break;
-    case SHIFT_ARROW_LEFT:
-        shift = 1;
+    case CTRL_ARROW_LEFT:
+        word = 1;
+        FALLTHROUGH;
     case ARROW_LEFT:
         if (*pos > 0) {
-            n = shift ? previous_word_count(line,*pos) : 1;
+            n = word ? previous_word_count(line,*pos) : 1;
             while (n-- > 0) {
                 (*pos)--;
                 cursor_left();
             }
         }
         break;
-    case SHIFT_ARROW_RIGHT:
-        shift = 1;
+    case CTRL_ARROW_RIGHT:
+        word = 1;
+        FALLTHROUGH;
     case ARROW_RIGHT:
         if (*pos < *len) {
-            n = shift ? next_word_count(line,*pos,*len) : 1;
+            n = word ? next_word_count(line,*pos,*len) : 1;
             while (n-- > 0) {
                 (*pos)++;
                 cursor_right();
@@ -246,26 +251,28 @@ WORD n, shift = 0;
         }
         break;
     case TAB:           /* tab completion */
+        line[*pos] = '\0';  /* terminate line so we don't see residual data */
         start = start_of_current_word(line,*pos);
-        if (start+sizeof(dta->d_fname)-line >= linesize)
+        if (prevcode != TAB)
+            insert = insertion_point(start);    /* where we insert the names */
+        if (insert+sizeof(dta->d_fname)-line >= linesize)
             break;
         if (prevcode == TAB) {
             rc = getnextfile(start==line);
-            if (rc < 0L) {              /* assume no more files */
-                rc = getfirstnondot(buffer,start==line);
-            }
         } else {
-            for (p = start, q = buffer; p < line+*pos; )
+            for (p = start, q = fsfbuf; p < line+*pos; )
                 *q++ = *p++;
             *q++ = '*';
             *q++ = '.';
             *q++ = '*';
             *q = '\0';
-            rc = getfirstnondot(buffer,start==line);
+            rc = -1L;       /* force getfirstnondot() */
         }
+        if (rc < 0L)        /* no more files */
+            rc = getfirstnondot(fsfbuf,start==line);
         if (rc == 0L) {
-            erase_line(start,*pos-(start-line));
-            for (q = start, p = dta->d_fname; *p; ) {
+            erase_line(insert,*pos-(insert-line));
+            for (q = insert, p = dta->d_fname; *p; ) {
                 conout(*p);
                 *q++ = *p++;
             }
@@ -375,6 +382,21 @@ char *p;
 
     /* no spaces found, so start of line */
     return line;
+}
+
+/*
+ *  return pointer to insertion point for tab completion
+ */
+PRIVATE char *insertion_point(char *start)
+{
+char *p, *ins = NULL;
+
+    for (p = ins = start; *p; p++) {
+        if ((*p == ':') || (*p == '\\'))
+            ins = p+1;
+    }
+
+    return ins;
 }
 
 /*

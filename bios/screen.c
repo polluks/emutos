@@ -1,7 +1,7 @@
 /*
  * screen.c - low-level screen routines
  *
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD   Martin Doering
@@ -15,28 +15,29 @@
 
 /*#define ENABLE_KDEBUG*/
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "machine.h"
+#include "has.h"
 #include "screen.h"
 #include "videl.h"
 #include "asm.h"
 #include "tosvars.h"
 #include "lineavars.h"
 #include "nvram.h"
-#include "kprint.h"
 #include "font.h"
 #include "vt52.h"
 #include "xbiosbind.h"
 #include "vectors.h"
 #include "country.h"
-#include "header.h"
+#include "../obj/header.h"
 #include "biosmem.h"
 #include "biosext.h"
+#include "bios.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
 
+void detect_monitor_change(void);
 static void setphys(const UBYTE *addr);
 
 #if CONF_WITH_ATARI_VIDEO
@@ -444,7 +445,7 @@ static char rez_was_hacked;
  */
 static BOOL get_default_palmode(void)
 {
-    if (os_conf == OS_CONF_MULTILANG)
+    if (os_header.os_conf == OS_CONF_MULTILANG)
     {
         /* No country/mode specified in OS header.
          * The mode is inferred from the COUNTRY Makefile variable. */
@@ -453,7 +454,7 @@ static BOOL get_default_palmode(void)
     else
     {
         /* Use the mode specified in OS header */
-        return os_conf & 0x0001;
+        return os_header.os_conf & 0x0001;
     }
 }
 
@@ -718,7 +719,8 @@ ULONG initial_vram_size(void)
     if (HAS_VIDEL)
         return FALCON_VRAM_SIZE;
     else if (HAS_TT_SHIFTER)
-        return shifter_vram_size(TT_HIGH);
+        /* TT TOS allocates 256 bytes more than actually needed. */
+        return shifter_vram_size(TT_HIGH) + 0x100ul;
     else
     {
         /* ST TOS rounds the VRAM size to upper kilobyte, so we do. */
@@ -1023,7 +1025,8 @@ void setpalette(const UWORD *palettePtr)
     KDEBUG(("Setpalette("));
     for(i = 0 ; i <= max ; i++) {
         KDEBUG(("%03x", palettePtr[i]));
-        if(i < 15) KDEBUG((" "));
+        if(i < 15)
+            KDEBUG((" "));
     }
     KDEBUG((")\n"));
 #endif
@@ -1075,3 +1078,106 @@ void vsync(void)
     set_sr(old_sr);
 #endif /* CONF_WITH_ATARI_VIDEO */
 }
+
+#if CONF_WITH_ATARI_VIDEO
+/*
+ * detect_monitor_change(): called by VBL interrupt handler
+ *
+ * this checks if the current monitor mode (monochrome/colour) is the
+ * same as that set in the shifter.  if not, it calls swv_vec() which
+ * by default does a system restart.
+ */
+void detect_monitor_change(void)
+{
+    SBYTE monoflag;
+    volatile SBYTE *gpip = ((volatile SBYTE *)0xfffffa01);
+    volatile UBYTE *shifter;
+    UBYTE monores;
+    UBYTE curres;
+    UBYTE newres;
+
+    /* not supported on VIDEL */
+    if (HAS_VIDEL)
+        return;
+
+    monoflag = *gpip;
+    if (HAS_DMASOUND)
+    {
+        WORD sr = set_sr(0x2700);
+        SBYTE monoflag2;
+        SBYTE dmaplay;
+
+        /*
+         * on systems with DMA sound, the 'DMA sound active' bit (bit 0
+         * of 0xffff8901) is XOR'ed with the monochrome detect bit before
+         * being presented at MFP GPIP bit 7.  therefore we must read both
+         * bits in order to determine the monitor type.  since the 'sound
+         * active' bit can be changed by the hardware at any time, we must
+         * avoid a race condition.  the following code waits for both the
+         * 'sound active' bit and MFP GPIP bit 7 to stabilise before
+         * determining the type of monitor connected.
+         */
+        for (;;)
+        {
+            dmaplay = *((volatile SBYTE *)0xffff8901);
+            monoflag = *gpip;
+            monoflag2 = *gpip;
+            if ((monoflag ^ monoflag2) < 0)
+                continue;
+            if (*((volatile SBYTE *)0xffff8901) == dmaplay)
+                break;
+        }
+
+        set_sr(sr);
+        if (dmaplay & 1)
+            monoflag = -monoflag;
+    }
+
+    if (HAS_TT_SHIFTER)
+    {
+        shifter = ((volatile UBYTE *)0xffff8262);
+        curres = *shifter & 7;
+        monores = TT_HIGH;
+    }
+    else    /* assumed ST(e) shifter */
+    {
+        shifter = ((volatile UBYTE *)0xffff8260);
+        curres = *shifter & 3;
+        monores = ST_HIGH;
+    }
+
+    if (curres == monores)  /* current resolution is mono */
+    {
+        if (monoflag >= 0)  /* mono monitor detected */
+            return;
+        /* colour monitor detected: switch resolution */
+        newres = defshiftmod;   /* use default shifter mode */
+        if (newres == monores)  /* but if it's mono, make it ST LOW */
+            newres = ST_LOW;
+    }
+    else        /* current resolution is a colour resolution */
+    {
+        if (monoflag < 0)   /* & colour monitor detected */
+            return;
+        /* mono monitor detected: switch resolution */
+#if 0
+        /*
+         * TOS 2.06 & 3.06 (at least) call this here to wait until just
+         * after a VBL.  it is surmised that this is because:
+         * (a) experience shows that at least some video hardware
+         *     misbehaves if the shifter value is not changed 'soon'
+         *     after the interrupt, and
+         * (b) in TOS 2/3, the vblqueue is processed before this routine
+         *     is called, and thus lengthy vblqueue function(s) could
+         *     trigger the misbehaviour.
+         */
+        vsync();
+#endif
+        newres = monores;
+    }
+
+    sshiftmod = newres;
+    *shifter = (*shifter & 0xf8) | newres;
+    (*swv_vec)();
+}
+#endif /* CONF_WITH_ATARI_VIDEO */

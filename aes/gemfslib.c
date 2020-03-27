@@ -2,17 +2,18 @@
  * gemfslib.c - the file selector
  *
  * Copyright 1999, Caldera Thin Clients, Inc.
- *           2002-2018 The EmuTOS development team
+ *           2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "config.h"
-#include "portab.h"
+
+#include "emutos.h"
 #include "struct.h"
 #include "obdefs.h"
-#include "dos.h"
-#include "../bios/tosvars.h"
+#include "tosvars.h"
+#include "aesdefs.h"
+#include "aesext.h"
 #include "gemlib.h"
 #include "gem_rsc.h"
 
@@ -28,7 +29,6 @@
 #include "rectfunc.h"
 #include "gemerror.h"
 #include "gemobed.h"
-#include "kprint.h"
 #include "string.h"
 #include "intmath.h"
 
@@ -153,7 +153,7 @@ static LONG fs_add(WORD thefile, LONG fs_index)
     WORD len;
 
     g_fslist[thefile] = fs_index;
-    ad_fsnames[fs_index++] = (D.g_dta.d_attrib & F_SUBDIR) ? 0x07 : ' ';
+    ad_fsnames[fs_index++] = (D.g_dta.d_attrib & FA_SUBDIR) ? 0x07 : ' ';
     len = strlencpy(ad_fsnames+fs_index,D.g_dta.d_fname);
     fs_index += len + 1;
     return fs_index;
@@ -186,28 +186,26 @@ static WORD fs_active(char *ppath, char *pspec, WORD *pcount)
 
     user_dta = dos_gdta();          /* remember user's DTA */
     dos_sdta(&D.g_dta);
-    ret = dos_sfirst(allpath, F_SUBDIR);
+    ret = dos_sfirst(allpath, FA_SUBDIR);
 
-    while (ret == 0)
+    /*
+     * like Atari TOS, we silently ignore any filenames that we don't
+     * have room for.  this should be an extremely rare occurrence.
+     */
+    while((ret == 0) && (thefile < nm_files))
     {
         /* if it is a real file or directory then save it and set
          * the first byte to tell which
          */
         if (D.g_dta.d_fname[0] != '.')
         {
-            if ((D.g_dta.d_attrib & F_SUBDIR) || (wildcmp(pspec, D.g_dta.d_fname)))
+            if ((D.g_dta.d_attrib & FA_SUBDIR) || (wildcmp(pspec, D.g_dta.d_fname)))
             {
                 fs_index = fs_add(thefile, fs_index);
                 thefile++;
             }
         }
         ret = dos_snext();
-
-        if (thefile >= nm_files)    /* too many files */
-        {
-            sound(TRUE, 660, 4);
-            break;
-        }
     }
 
     *pcount = thefile;
@@ -443,6 +441,9 @@ static void select_drive(OBJECT *treeaddr, WORD drive, WORD redraw)
     WORD i, olddrive = -1;
     OBJECT *obj, *start = treeaddr+DRIVE_OFFSET;
 
+    if ((drive < 0) || (drive >= NM_DRIVES))    /* invalid, don't change selected */
+        return;
+
     for (i = 0, obj = start; i < NM_DRIVES; i++, obj++)
     {
         if (obj->ob_state & SELECTED)
@@ -509,14 +510,14 @@ static WORD get_drive(char *path)
  */
 WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
 {
+    BOOL cont, newlist, newsel, newdrive;
+    WORD drive, dclkret, error;
     WORD touchob, value, fnum;
     WORD curr, count, sel;
     WORD mx, my;
     OBJECT *tree;
     ULONG bitmask;
-    char *ad_fpath, *ad_fname, *ad_ftitle;
-    WORD drive;
-    WORD dclkret, cont, newlist, newsel, newdrive;
+    char *ad_fpath, *ad_fname;
     char *pstr;
     GRECT pt;
     char *memblk, *locstr, *locold, *mask;
@@ -527,7 +528,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     curr = 0;
     count = 0;
 
-    /* get out quick if path is nullptr or if pts to null. */
+    /* get out quick if path is nullptr */
     if (pipath == NULL)
         return FALSE;
 
@@ -575,9 +576,8 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     tree = rs_trees[FSELECTR];
     obj = tree + FTITLE;
     tedinfo = (TEDINFO *)obj->ob_spec;
-    ad_ftitle = tedinfo->te_ptext;
     set_mask(mask, locstr);             /* save caller's mask */
-    strcpy(ad_ftitle, mask);            /*  & copy to title line */
+    tedinfo->te_ptext = mask;           /*  & point title line at it */
 
     obj = tree + FSDIRECT;
     tedinfo = (TEDINFO *)obj->ob_spec;
@@ -614,6 +614,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
     sel = 0;
     newsel = newdrive = FALSE;
     cont = newlist = TRUE;
+    error = 0;      /* consecutive error count */
     while(cont)
     {
         touchob = (newlist) ? 0x0 : fm_do(tree, FSSELECT);
@@ -622,32 +623,32 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
         if (newlist)
         {
             fs_sel(sel, NORMAL);
-            if ((touchob == FSOK) || (touchob == FSCANCEL))
-                ob_change(tree, touchob, NORMAL, TRUE);
             inf_sset(tree, FSDIRECT, locstr);
             pstr = fs_pspec(locstr, NULL);
             strcpy(pstr, mask);
             curr = 0;
-            sel = touchob = 0;
+            sel = 0;
             newlist = FALSE;
-            if (!fs_newdir(locstr, mask, tree, &count)) /* error reading dir */
-            {
+            if (fs_newdir(locstr, mask, tree, &count))  /* ok reading dir */
+                error = 0;
+            else ++error;
+            if (error == 1)     /* only retry once; this avoids continual retries */
+            {                   /* due to e.g. missing/unformatted floppy disk    */
                 /*
-                 * if path was changed, reset it; otherwise initial
-                 * path was was wrong, so set it to the root of the
-                 * current drive.  retry in either case.
+                 * if we have an error & the path was changed, reset it;
+                 * otherwise the initial path must have been wrong, so set it
+                 * to the root of the current drive.  retry in either case.
                  */
                 newlist = TRUE;                     /* make it retry */
                 if (strcmp(locstr,locold) != 0)     /* path was changed */
                 {                                   /* so try to recover */
                     strcpy(locstr,locold);
-                    select_drive(tree,get_drive(locstr),TRUE);
                 }
                 else
                 {
                     sprintf(locstr,"%c:\\%s",'A'+dos_gdrv(),mask);
-                    strcpy(locold,locstr);
                 }
+                select_drive(tree,get_drive(locstr),TRUE);
             }
             strcpy(locold,locstr);
         }
@@ -662,6 +663,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
                 ob_change(tree,FSOK,NORMAL,TRUE);/* (so deselect the button) */
                 break;
             }
+            FALLTHROUGH;
         case FSCANCEL:
             cont = FALSE;
             break;
@@ -681,7 +683,7 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
                 value = NM_NAMES;
                 break;
             }
-            /* drop through */
+            FALLTHROUGH;
         case FSVELEV:
             fm_own(TRUE);
             value = gr_slidebox(tree, FSVSLID, FSVELEV, TRUE);
@@ -758,6 +760,10 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
             break;
         }
 
+        /* exit immediately if cancel */
+        if (touchob == FSCANCEL)
+            break;
+
         if (!newlist && !newdrive && path_changed(locstr))  /* path changed manually */
         {
             if (get_drive(ad_fpath) != get_drive(locstr))   /* drive has changed */
@@ -778,8 +784,11 @@ WORD fs_input(char *pipath, char *pisel, WORD *pbutton, char *pilabel)
         {
             inf_sset(tree, FSDIRECT, locstr);
             set_mask(mask, locstr);             /* set mask */
-            selname[1] = '\0';                  /* selected is empty */
-            newsel = TRUE;
+            if (!error)                         /* if newlist is NOT due to an error, */
+            {
+                selname[1] = '\0';              /* clear out the selection            */
+                newsel = TRUE;
+            }
         }
 
         if (newsel)

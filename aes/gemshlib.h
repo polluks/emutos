@@ -1,7 +1,7 @@
 /*
  * EmuTOS AES
  *
- * Copyright (C) 2002-2018 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -10,17 +10,12 @@
 #ifndef GEMSHLIB_H
 #define GEMSHLIB_H
 
-extern SHELL    sh[];
-
 extern char     *ad_stail;
-
-extern WORD     gl_shgem;
 
 extern WORD     gl_changerez;
 extern WORD     gl_nextrez;
 
 void sh_read(char *pcmd, char *ptail);
-void sh_curdir(char *ppath);
 WORD sh_write(WORD doex, WORD isgem, WORD isover, const char *pcmd, const char *ptail);
 void sh_get(void *pbuffer, WORD len);
 void sh_put(const void *pdata, WORD len);
@@ -34,8 +29,7 @@ WORD sh_find(char *pspec);
 void sh_rdef(char *lpcmd, char *lpdir);
 void sh_wdef(const char *lpcmd, const char *lpdir);
 
-void sh_main(BOOL isgem);
+void sh_main(BOOL isauto, BOOL isgem);
 
-typedef void PRG_ENTRY(void);   /* Program entry point type */
 LONG aes_run_rom_program(PRG_ENTRY *entry);
 #endif

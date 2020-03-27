@@ -1,7 +1,7 @@
 /*
  * vectors.h - exception vectors, interrupt routines and system hooks
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -13,32 +13,28 @@
 #ifndef VECTORS_H
 #define VECTORS_H
 
-#include "portab.h"
-
 /* initialize default exception vectors */
 
-extern void init_exc_vec(void);
-extern void init_user_vec(void);
+void init_exc_vec(void);
+void init_user_vec(void);
 
 /* initialise acia vectors */
 
-extern void init_acia_vecs(void);
+void init_acia_vecs(void);
 
 /* some exception vectors */
 
 #if CONF_WITH_ATARI_VIDEO
-extern void int_hbl(void);
+void int_hbl(void);
 #endif
-extern void int_vbl(void);
-extern void int_linea(void);
-extern void int_timerc(void);
+void int_vbl(void);
+void int_linea(void);
+void int_timerc(void);
 
-extern void gemtrap(void);
-extern void biostrap(void);
-extern void xbiostrap(void);
+void biostrap(void);
+void xbiostrap(void);
 
-extern void just_rte(void);
-extern void just_rts(void);
+void just_rte(void);
 
 #if CONF_WITH_BUS_ERROR
 long check_read_byte(long);
@@ -46,10 +42,10 @@ long check_read_byte(long);
 
 
 /* */
-extern LONG default_etv_critic(WORD err,WORD dev);
-extern void int_illegal(void);
-extern void int_priv(void);
-extern void int_unimpint(void);
+LONG default_etv_critic(WORD err,WORD dev);
+void int_illegal(void);
+void int_priv(void);
+void int_unimpint(void);
 
 extern WORD trap_save_area[];
 
@@ -93,7 +89,7 @@ extern WORD trap_save_area[];
 #define VEC_ACIA    VEC_MFP6                  /* Keyboard/MIDI interrupt vector */
 
 /* OS exception mapping */
-#define VEC_AES     VEC_TRAP2                 /* AES trap exception vector */
+#define VEC_GEM     VEC_TRAP2                 /* GEM trap exception vector */
 #define VEC_BIOS    VEC_TRAP13                /* BIOS trap exception vector */
 #define VEC_XBIOS   VEC_TRAP14                /* XBIOS trap exception vector */
 

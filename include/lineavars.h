@@ -1,7 +1,7 @@
 /*
  * lineavars.h - name of linea graphics related variables
  *
- * Copyright (C) 2001-2017 by Authors:
+ * Copyright (C) 2001-2019 by Authors:
  *
  * Authors:
  *  MAD   Martin Doering
@@ -17,7 +17,8 @@
 #ifndef LINEAVARS_H
 #define LINEAVARS_H
 
-#include "portab.h"
+#include "biosdefs.h"
+#include "fonthdr.h"
 
 /* Screen related variables */
 
@@ -29,7 +30,7 @@
  * and above when referencing the lineA version will overwrite
  * other lineA variables with unpredictable results.
  */
-typedef struct {
+typedef struct _mcs {
         WORD    len;            /* height of saved form */
         UWORD   *addr;          /* screen address of saved form */
         UBYTE    stat;          /* save status */
@@ -43,13 +44,13 @@ typedef struct {
 extern MCS mouse_cursor_save;       /* in linea variable area */
 extern MCS ext_mouse_cursor_save;   /* use for v_planes > 4 */
 
-extern const UBYTE shift_offset[9]; /* pixel to address helper */
-extern MCS *mcs_ptr;            /* ptr to mouse cursor save area in use */
-
+#define line_a_vars (void *)&v_planes   /* start of linea variables */
 extern UWORD v_planes;          /* count of color planes */
 extern UWORD v_lin_wr;          /* line wrap : bytes per line */
+extern UWORD v_cel_ht;          /* cell height (width is 8) */
 extern UWORD v_cel_mx;          /* number of columns - 1 */
 extern UWORD v_cel_my;          /* number of rows - 1 */
+extern UWORD v_cel_wr;          /* length (in bytes) of a line of characters */
 extern UWORD v_cur_cx;          /* current cursor column */
 extern UWORD v_cur_cy;          /* current cursor row */
 extern UWORD V_REZ_HZ;          /* screen horizontal resolution */
@@ -57,6 +58,8 @@ extern UWORD V_REZ_VT;          /* screen vertical resolution */
 extern UWORD BYTES_LIN;         /* width of line in bytes */
 
 extern WORD DEV_TAB[];          /* intout array for open workstation */
+
+extern WORD MOUSE_BT;           /* mouse button state */
 
 /* Line-drawing related variables */
 extern WORD X1, Y1, X2, Y2;     /* coordinates for end points */
@@ -87,6 +90,30 @@ extern WORD TEXTFG;             /* text foreground colour */
 extern WORD *SCRTCHP;           /* Pointer to text scratch buffer */
 extern WORD SCRPT2;             /* Offset to large text buffer */
 
-extern void linea_init(void);   /* initialize variables */
+/* font-specific variables */
+extern const Fonthead *CUR_FONT;/* most recently used font */
+extern const UWORD *v_fnt_ad;   /* address of current monospace font */
+extern const UWORD *v_off_ad;   /* address of font offset table */
+extern UWORD v_fnt_nd;          /* ascii code of last cell in font */
+extern UWORD v_fnt_st;          /* ascii code of first cell in font */
+extern UWORD v_fnt_wr;          /* font cell wrap */
+extern const Fonthead *def_font;/* default font of open workstation */
+
+/*
+ * font_ring is an array of four pointers, each of which points to
+ * a linked list of font headers.  usage is as follows:
+ *  font_ring[0]    system fonts that are available in all resolutions;
+ *                  this is currently just the 6x6 font
+ *  font_ring[1]    resolution-dependent system fonts; currently
+ *                  the 8x8 and 8x16 fonts
+ *  font_ring[2]    fonts loaded by GDOS; initially an empty list
+ *  font_ring[3]    always NULL, marking the end of the list of lists
+ */
+extern const Fonthead *font_ring[4];/* all available fonts */
+extern WORD font_count;             /* number of different font ids in font_ring[] */
+
+/* timer-related vectors */
+extern ETV_TIMER_T tim_addr;  /* timer interrupt vector */
+extern ETV_TIMER_T tim_chain; /* timer interrupt vector save */
 
 #endif /* LINEAVARS_H */

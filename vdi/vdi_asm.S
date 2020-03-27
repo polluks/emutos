@@ -2,42 +2,69 @@
  * entry.S - Front end of the screen driver and mouse stuff
  *
  * Copyright 1999 Caldera, Inc. and Authors:
- * Copyright 2004-2017 The EmuTOS development team
+ * Copyright 2004-2019 The EmuTOS development team
  * Copyright      Steve Cavender
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "asmdefs.h"
 
+#include "asmdefs.h"
+#include "vdiext.h"
+
+        .extern _local_pb
+        .extern _CONTRL
+        .extern _flip_y
+        .extern _screen
+        .extern _vdishare               //see vdi_fill.c
+
+#define lcl_ptsin _vdishare
+
+/*
+ * _vditrap - VDI trap dispatcher
+ *
+ * This functions checks for a trap-2 VDI call and jumps to the VDI dispatcher
+ * then. It also provides a simple vq_gdos call and the "d0=-1" query function
+ * that returns the dispatcher's address.
+ *
+ * Note that this function does not care about AES calls since the AES later
+ * hooks into the trap-2 vector itself.
+ */
+        .globl  _vditrap
+_vditrap:
+        cmp.w   #0x73,d0                // VDI call?
+        jne     no_vdi
+        jsr     _GSX_ENTRY
+        rte
+
+no_vdi:
+        cmp.w   #0xfffe,d0              // vq_gdos call?
+        jeq     what_gdos
+
+        cmp.w   #0xffff,d0              // query for jsr:able address?
+        jeq     query
+
+        rte
+
+what_gdos:
+        move.l  #-2, d0                 // -2  -  no GDOS installed
+        rte
+
+query:
+        move.l  #_GSX_ENTRY,d0          // Return address of VDI dispatcher
+        rte
 
 /*
  * _GSX_ENTRY - front end of the GIOS for the screen driver
  */
-        .extern _local_pb
-        .extern _CONTRL
-        .extern _INTIN
-        .extern _PTSIN
-        .extern _INTOUT
-        .extern _PTSOUT
-        .extern _flip_y
-        .extern _screen
 
-        .globl  _GSX_ENTRY
-
-
-#define ptsin_size 512          // max. # of elements allowed for PTSIN array
-#define ptsin_max  ptsin_size/2 // max. # of coordinate pairs for PTSIN array
 #define W_1        2            // byte offset to first element of an array
-#define W_3        6            // byte offset to third element of an array
 
-        .bss
-lcl_ptsin:      .ds.w   ptsin_size
 
         .text
 
+        .globl  _GSX_ENTRY
 _GSX_ENTRY:
-
 #ifdef __mcoldfire__
         lea     -56(sp),sp
         movem.l d1-d7/a0-a6,(sp)        //Save the callers registers
@@ -52,32 +79,26 @@ _GSX_ENTRY:
         movea.l (a2)+,a0        // copy address of user's CONTRL aray
         move.l  a0,(a1)+        // save address of user's CONTRL array
         move.l  (a2)+,(a1)+     // save address of user's INTIN  array
-        lea     lcl_ptsin,a3    // local area used for PTSIN array address
+        lea     lcl_ptsin,a3    // shared area used for local copy of PTSIN array
         move.l  a3,(a1)+        // save address of local PTSIN array
         move.l  (a2)+,a4        // get address of user's PTSIN array
         move.l  (a2)+,(a1)+     // save address of user's INTOUT array
         move.l  (a2),(a1)       // save address of user's PTSOUT array
 
-/* Save a copy of the user's CONTRL[1] and CONTRL[3] elements on the stack. */
-/* This routine or the SCREEN DRIVER may change these values. */
+/* Save a copy of the user's CONTRL[1] element on the stack, in case we change it. */
 #ifdef __mcoldfire__
         moveq   #0,d0
 #endif
-        move.w  W_1(a0),d0      // get number of PTSIN entries from CONTRL[1]
-        move.w  W_3(a0),d1      // get number of INTIN entries from CONTRL[3]
+        move.w  2(a0),d0        // get number of PTSIN entries from CONTRL[1]
 
 /* Validate the number of entries in user's PTSIN array. */
         move.w  d0,-(sp)        // save number of PTSIN entries from CONTRL[1]
-        jeq     size_intin      // for number of vertices = 0
-        jpl     size_ptsin      // for number of vertices > 0
-        clr.w   W_1(a0)         // for number of vertices < 0
-//                              // set user's CONTRL[1] to 0
-        jra     size_intin
+        jeq     no_ptsin        // for number of vertices = 0
 size_ptsin:
-        cmpi.w  #ptsin_max,d0   // # of user vertices > # of allowable vertices?
+        cmpi.w  #MAX_VERTICES,d0  // # of user vertices > # of allowable vertices?
         jle     ptsin_ok        // for user vertices =< # of allowable vertices
-        move.w  #ptsin_max,d0   // user vertices > # of allowable vertices
-        move.w  d0,W_1(a0)      // put max # of vertices in user's CONTRL[1]
+        move.w  #MAX_VERTICES,d0  // user vertices > # of allowable vertices
+        move.w  d0,2(a0)        // put max # of vertices in user's CONTRL[1]
 ptsin_ok:
         subq.l  #1,d0           // adjust coordinate count for loop
 save_ptsin:
@@ -89,21 +110,13 @@ save_ptsin:
         dbra    d0,save_ptsin   // point to next x,y coordinate pair
 #endif
 
-/* Validate number of entries in user's INTIN array. */
-size_intin:
-        move.w  d1,-(sp)        // save number of INTIN entries from CONTRL[3]
-        jpl     intin_ok        // for user entries > 0
-        clr.w   W_3(a0)         // put 0 entries in user's CONTRL[3]
-
-intin_ok:
-
+no_ptsin:
 /* Call screen which contains all the C routines for the SCREEN DRIVER. */
         jsr     _screen
 
-/* Restore user's CONTRL[1] and CONTRL[3] array elements from the stack. */
+/* Restore user's CONTRL[1] element from the stack. */
         movea.l _CONTRL,a0      // get address of user's CONTRL array
-        move.w  (sp)+,W_3(a0)   // original # of INTIN entries to CONTRL[3]
-        move.w  (sp)+,W_1(a0)   // original # of PTSIN entries to CONTRL[1]
+        move.w  (sp)+,2(a0)     // original # of PTSIN entries to CONTRL[1]
 
 #ifdef __mcoldfire__
         movem.l (sp), d1-d7/a0-a6  // restore the caller's registers
@@ -116,10 +129,8 @@ intin_ok:
 
         rts
 
-
 #define F_SAVRDY        0               // save buffer status flag: 0:empty  1:full
 #define F_SAVWID        1               // saved line width        0:word   1:longword
-
 
         .text
 
@@ -127,9 +138,11 @@ intin_ok:
 
         .globl  _mov_cur        // set's new x/y coordinates
         .globl  _mouse_int      // mouse interrupt routine
+#if CONF_WITH_EXTENDED_MOUSE
         .globl  _wheel_int      // wheel interrupt routine
         .globl  _call_user_but  // call the _user_but vector from C
         .globl  _call_user_wheel// call the _user_wheel vector from C
+#endif
 
         /* External variables used here */
 
@@ -147,12 +160,12 @@ intin_ok:
         .extern _user_but       // user button vector
         .extern _user_mot       // user motion vector
         .extern _user_cur       // user cursor vector
+#if CONF_WITH_EXTENDED_MOUSE
         .extern _user_wheel     // user wheel vector
+        .extern _old_statvec    // previous IKBD status packet vector
+#endif
 
         .extern _DEV_TAB        // address of device table
-
-        .extern _old_statvec    // previous IKBD status packet vector
-
 
         .text
 
@@ -212,8 +225,6 @@ cl_ymax:
         move.w  2(a0),d1        // yes - set it to the maximum value
 cl_done:
         rts
-
-
 
 /*
  * _mouse_int - Mouse interrupt routine
@@ -375,7 +386,7 @@ ms_done:
 ms_exit:
         rts
 
-
+#if CONF_WITH_EXTENDED_MOUSE
 
 /*
  * _wheel_int - Mouse wheel interrupt routine
@@ -475,7 +486,7 @@ wheel_exit:
 wheel_ikbd_packet:
         .dc.b   0x05,0x00,0x00,0x00,0x00,0x00
 
-
+#endif /* CONF_WITH_EXTENDED_MOUSE */
 
 /*
  * mov_cur - moves the mouse cursor to its new location
@@ -489,7 +500,6 @@ wheel_ikbd_packet:
  *
  * Registers Modified:     None
  */
-
 _mov_cur:
         tst.w   _HIDE_CNT       // is the cursor hidden?
         jne     mov_cur1        // yes - don't draw it now
@@ -529,7 +539,7 @@ _mov_cur:
 mov_cur1:
         rts
 
-
+#if CONF_WITH_EXTENDED_MOUSE
 
 /*
  * Call the _user_but vector from C.
@@ -539,8 +549,6 @@ _call_user_but:
         move.l  _user_but,a0
         jmp     (a0)
 
-
-
 /*
  * Call the _user_wheel vector from C.
  */
@@ -549,3 +557,5 @@ _call_user_wheel:
         move.w  6(sp),d1
         move.l  _user_wheel,a0
         jmp     (a0)
+
+#endif /* CONF_WITH_EXTENDED_MOUSE */

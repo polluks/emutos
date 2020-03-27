@@ -1,7 +1,7 @@
 /*
  * nlsasm.S - fast routines for the nls hash tables
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -12,7 +12,6 @@
 
 #include "asmdefs.h"
 #include "i18nconf.h"
-
 
 #if CONF_WITH_NLS
 
@@ -215,7 +214,6 @@ srh_end:
         move.l  a1,d0
 #endif /* USE_RAM_HASH */
         rts
-
 
         .bss
 #if USE_RAM_HASH

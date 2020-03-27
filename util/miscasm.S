@@ -2,7 +2,7 @@
  * miscasm.S - Some small helper functions in assembler
  *
  * Copyright (C) 2001 by following authors
- * Copyright (C) 2013 by The EmuTOS development team.
+ * Copyright (C) 2013-2019 by The EmuTOS development team.
  *
  * Authors:
  *  SCC     Steven C. Cavender
@@ -14,15 +14,10 @@
 
 #include "asmdefs.h"
 
-        .globl  _trap1          // call GEMDOS
-        .globl  _trap1_pexec    // Reentrant Pexec call
-        .globl  _stop_until_interrupt   // Wrapper around the STOP instruction
-
-
 /*
  * trap1 - trap 1 (GEMDOS) entry point
  */
-        .text
+        .globl  _trap1
 _trap1:
         move.l  (sp)+,t1spsav   // save return address
 #ifdef __mcoldfire__
@@ -46,12 +41,12 @@ t1spsav:
 t1regsav:
         .ds.l   2
 
-
+        .text
 
 /*
  *  GEMDOS Pexec() call. This version is reentrant unlike the trap1 function!
  */
-        .text
+        .globl  _trap1_pexec    // Reentrant Pexec call
 _trap1_pexec:
 #ifdef __mcoldfire__
         move.l  a2,-(sp)
@@ -80,6 +75,7 @@ _trap1_pexec:
  * Stop the CPU until an interrupt occurs.
  * This may save some host CPU time on emulators (i.e. ARAnyM).
  */
+        .globl  _stop_until_interrupt
 _stop_until_interrupt:
         move.w  sr,d0
         move.w  d0,d1           // Backup
@@ -141,6 +137,53 @@ stop6:
 stop7:
         stop    #0x2700
         move.w  d0,sr
-        rts
+
+        // Fall through _just_rts
 
 #endif /* USE_STOP_INSN_TO_FREE_HOST_CPU */
+
+// The RTS below is shared for other purposes.
+        .globl  _just_rts
+_just_rts:
+        rts
+
+/*
+ *  WORD mul_div_round(WORD mult1,WORD mult2,WORD divisor)
+ *
+ *  multiplies two WORDs together and divides by a WORD, returning a WORD.
+ *  the result is rounded away from zero if the remainder is greater than
+ *  or equal to half the divisor.
+ *
+ *  if you do not need rounding, use mul_div() from intmath.h instead!
+ */
+        .globl  _mul_div_round
+_mul_div_round:
+        move.l  d2,-(sp)        // ColdFire friendly
+        move.l  d3,-(sp)
+        moveq   #1,d1           // preload increment
+        move.w  8+6(sp),d0
+        muls    8+4(sp),d0      // d0 = mult1 * mult2
+        jpl     mulplus
+        neg.l   d1              // negate increment
+mulplus:
+        move.w  8+8(sp),d2
+        divs    d2,d0           // d0 = mult1 * mult2 / divisor
+        ext.l   d2              // extend divisor to longword for ColdFire
+        jpl     divplus         // branch if divisor positive
+        neg.l   d1              // else negate increment
+        neg.l   d2              //  & make divisor positive
+divplus:
+        move.l  d0,d3
+        swap    d3              // d3.w = remainder
+        ext.l   d3              // extend remainder to longword for ColdFire
+        jpl     remplus         // branch if positive
+        neg.l   d3              // else make remainder positive
+remplus:
+        asl.l   #1,d3           // d3.l = 2 * remainder
+        cmp.l   d2,d3           // bigger than divisor?
+        jlt     noround         // no, branch
+        add.l   d1,d0           // else add increment
+noround:
+        move.l  (sp)+,d3
+        move.l  (sp)+,d2
+        rts

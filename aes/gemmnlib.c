@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,10 +19,11 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "aesvars.h"
 #include "obdefs.h"
 #include "gemlib.h"
 
@@ -38,7 +39,6 @@
 #include "rectfunc.h"
 #include "gemmnlib.h"
 #include "geminit.h"
-#include "kprint.h"
 
 
 #define MTH 1                                   /* menu thickness       */

@@ -1,7 +1,7 @@
 /*
  * memory2.c - Memory functions
  *
- * Copyright (C) 2016-2018 The EmuTOS development team
+ * Copyright (C) 2016-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -12,19 +12,18 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "memory.h"
 #include "tosvars.h"
-#include "kprint.h"
 #include "machine.h"
-#include "processor.h"
+#include "has.h"
+#include "cookie.h"
+#include "biosext.h"    /* for cache control routines */
 #include "vectors.h"
+#include "../bdos/bdosstub.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
-
-extern long xmaddalt(UBYTE *start, long size); /* found in bdos/mem.h */
 
 UBYTE meminit_flags;
 
@@ -123,7 +122,7 @@ void ttram_detect(void)
 /* Initialize all Alt-RAM */
 void altram_init(void)
 {
-#ifdef STATIC_ALT_RAM_SIZE
+#if CONF_WITH_STATIC_ALT_RAM && defined(STATIC_ALT_RAM_SIZE)
     KDEBUG(("xmaddalt() static adr=%p size=%ld\n",
         (UBYTE *)STATIC_ALT_RAM_ADDRESS, STATIC_ALT_RAM_SIZE));
     xmaddalt((UBYTE *)STATIC_ALT_RAM_ADDRESS, STATIC_ALT_RAM_SIZE);
@@ -145,7 +144,7 @@ void altram_init(void)
 
         /* Only enable 6Mb when on a Mega STE due to address conflict with
            VME bus. Todo: This should be made configurable. */
-        if (has_vme)
+        if (cookie_mch == MCH_MSTE)
             monster_reg = 6;
         else
             monster_reg = 8;

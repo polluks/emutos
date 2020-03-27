@@ -2,7 +2,7 @@
  * mfp.c - handling of the Multi-Function Peripheral MFP 68901
  *
  * Copyright (C) 2001 Martin Doering
- * Copyright (C) 2001-2016 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -12,10 +12,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "mfp.h"
 #include "tosvars.h"
 #include "vectors.h"
@@ -162,7 +159,8 @@ static const WORD timer_num[] = { 13, 8, 5, 4 };
 
 void xbtimer(WORD timer, WORD control, WORD data, LONG vector)
 {
-    if(timer < 0 || timer > 3) return;
+    if(timer < 0 || timer > 3)
+        return;
     setup_timer(MFP_BASE,timer, control, data);
     mfpint(timer_num[timer], vector);
 }

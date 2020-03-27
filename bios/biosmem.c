@@ -1,7 +1,7 @@
 /*
  *  biosmem.c - dumb bios-level memory management
  *
- * Copyright (C) 2002-2018 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL    Laurent Vogel
@@ -14,11 +14,12 @@
 /* #define ENABLE_KDEBUG */
 #define DBG_BALLOC 0
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "biosmem.h"
-#include "kprint.h"
 #include "tosvars.h"
+#include "bios.h"
+#include "biosext.h"
+#include "../vdi/vdistub.h"
 
 #if DBG_BALLOC
 static BOOL bmem_allowed;
@@ -56,9 +57,6 @@ void bmem_init(void)
     KDEBUG(("       _edata = %p\n", _edata));
     KDEBUG(("         _bss = %p\n", _bss));
     KDEBUG(("   _endvdibss = %p\n", _endvdibss));
-#if WITH_AES
-    KDEBUG(("   _endgembss = %p\n", _endgembss));
-#endif
     KDEBUG(("        _ebss = %p\n", _ebss));
     KDEBUG(("       stkbot = %p\n", stkbot));
     KDEBUG(("       stktop = %p\n", stktop));
@@ -132,8 +130,6 @@ UBYTE *balloc_stram(ULONG size, BOOL top)
 
     return ret;
 }
-
-extern MD themd;                /* BIOS memory descriptor */
 
 void getmpb(MPB * mpb)
 {

@@ -1,7 +1,7 @@
 /*
  * pmmu030.c - initialisation for 68030 PMMU
  *
- * Copyright (C) 2013-2015 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -9,8 +9,8 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "config.h"
-#include "portab.h"
+
+#include "emutos.h"
 #include "string.h"
 
 /*
@@ -143,7 +143,7 @@ static const struct pmmutable mmutable_rom =
     }
 };
 
-extern void setup_68030_pmmu(void); /* called only from processor.S */
+void setup_68030_pmmu(void);    /* called only from processor.S */
 
 void setup_68030_pmmu(void)
 {

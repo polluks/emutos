@@ -13,6 +13,7 @@ emutosfi.prg - Finnish (PAL)
 emutosfr.prg - French (PAL)
 emutosgr.prg - Greek (PAL)
 emutosit.prg - Italian (PAL)
+emutosnl.prg - Dutch (PAL)
 emutosno.prg - Norwegian (PAL)
 emutosru.prg - Russian (PAL)
 emutosse.prg - Swedish (PAL)
@@ -21,8 +22,6 @@ emutosuk.prg - English (PAL)
 emutosus.prg - English (NTSC)
 
 The following optional files are also supplied:
-emucurs.rsc - modifiable mouse cursors for the AES/desktop
-emucurs.def - definition file for the above
 emuicon.rsc - contains additional icons for the desktop
 emuicon.def - definition file for the above
 

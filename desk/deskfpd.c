@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,8 +19,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "obdefs.h"
 #include "gemdos.h"
 #include "optimize.h"
@@ -34,12 +33,10 @@
 #include "deskfpd.h"
 #include "deskins.h"
 #include "deskwin.h"
-#include "dos.h"
 #include "deskrsrc.h"
 #include "desksupp.h"
 
 #include "string.h"
-#include "kprint.h"
 
 
 /*
@@ -86,7 +83,7 @@ PNODE *pn_open(char *pathname, WNODE *pw)
     thepath = &pw->w_pnode;
     thepath->p_flist = NULL;    /* file list starts empty */
     strcpy(thepath->p_spec,pathname);
-    thepath->p_attr = F_SUBDIR;
+    thepath->p_attr = DISPATTR;
 
     return thepath;
 }
@@ -142,8 +139,8 @@ static LONG pn_comp(FNODE *pf1, FNODE *pf2)
 {
     if (G.g_isort != S_NSRT)
     {
-        if ((pf1->f_attr ^ pf2->f_attr) & F_SUBDIR)
-            return (pf1->f_attr & F_SUBDIR) ? -1L : 1L;
+        if ((pf1->f_attr ^ pf2->f_attr) & FA_SUBDIR)
+            return (pf1->f_attr & FA_SUBDIR) ? -1L : 1L;
     }
 
     return pn_fcomp(pf1,pf2,G.g_isort);
@@ -221,11 +218,15 @@ FNODE *pn_sort(PNODE *pn)
  *  fun_file2any() when dragging a desktop icon representing a file/folder
  *
  *  returns 0   0 or more files found without error
+ *              NOTE: if insufficient memory is available, some files in
+ *              the specified pathnode will be silently excluded from the
+ *              filenode list.  our excuse is that Atari TOS does this too ...
  *          <0  error (other than EFILNF/ENMFIL) returned by dos_sfirst()/dos_snext()
  *              (e.g. when attempting to open a floppy drive with no disk)
  */
 WORD pn_active(PNODE *pn, BOOL include_folders)
 {
+    DTA *dtasave;
     FNODE *fn, *prev;
     LONG maxmem, maxcount, size = 0L;
     WORD count, ret;
@@ -244,6 +245,7 @@ WORD pn_active(PNODE *pn, BOOL include_folders)
     fn = pn->p_fbase;
     prev = (FNODE *)&pn->p_flist;   /* assumes fnode link is at start of fnode */
 
+    dtasave = dos_gdta();           /* so we can preserve it */
     dos_sdta(&G.g_wdta);
 
 #if CONF_WITH_FILEMASK
@@ -256,7 +258,7 @@ WORD pn_active(PNODE *pn, BOOL include_folders)
     match = filename_start(pn->p_spec); /* the match filespec is always unaltered */
     for (ret = dos_sfirst(search, pn->p_attr), count = 0; (ret == 0) && (count < maxcount); ret = dos_snext())
     {
-        if (G.g_wdta.d_attrib != F_SUBDIR)  /* skip *files* that don't match */
+        if (G.g_wdta.d_attrib != FA_SUBDIR) /* skip *files* that don't match */
             if (!wildcmp(match, G.g_wdta.d_fname))
                 continue;
 #else
@@ -288,7 +290,9 @@ WORD pn_active(PNODE *pn, BOOL include_folders)
 
     /* check if enough FNODEs were available */
     if (count >= maxcount)
-        return E_NOMEMORY;
+        KDEBUG(("Not enough FNODEs for folder %s\n",pn->p_spec));
+
+    dos_sdta(dtasave);          /* restore original DTA for neatness */
 
     return ((ret==ENMFIL) || (ret==EFILNF)) ? 0 : ret;
 }

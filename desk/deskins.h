@@ -1,7 +1,7 @@
 /*
  * EmuTOS desktop
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -10,7 +10,13 @@
 #ifndef _DESKINS_H
 #define _DESKINS_H
 
-char *filename_start(char *path);
+/*
+ * function key numbers (as displayed in dialogs)
+ */
+#define FIRST_FUNKEY    1
+#define LAST_FUNKEY     20
+#define NUM_FUNKEYS     (LAST_FUNKEY-FIRST_FUNKEY+1)
+
 WORD is_installed(ANODE *pa);
 WORD ins_app(WORD curr);
 BOOL ins_devices(void);

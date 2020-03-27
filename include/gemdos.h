@@ -1,7 +1,7 @@
 /*
  * EmuTOS interface to GEMDOS
  *
- * Copyright (C) 2002-2018 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -38,10 +38,12 @@ LONG dos_delete(char *name);
 void dos_space(WORD drv, LONG *ptotal, LONG *pavail);
 WORD dos_rename(char *p1, char *p2);
 WORD dos_rmdir(char *path);
+LONG dos_load_file(char *filename, LONG count, char *buf);
 
 void *dos_alloc_stram(LONG nbytes);
 void *dos_alloc_anyram(LONG nbytes);
 LONG dos_avail_stram(void);
+LONG dos_avail_altram(void);
 LONG dos_avail_anyram(void);
 WORD dos_free(void *maddr);
 WORD dos_shrink(void *maddr, LONG length);

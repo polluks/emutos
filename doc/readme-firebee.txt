@@ -6,8 +6,6 @@ http://firebee.org/
 emutosfb.s19 - Multilanguage
 
 The following optional files are also supplied:
-emucurs.rsc - modifiable mouse cursors for the AES/desktop
-emucurs.def - definition file for the above
 emuicon.rsc - contains additional icons for the desktop
 emuicon.def - definition file for the above
 
@@ -23,6 +21,7 @@ Other supported languages are:
 - French
 - Greek
 - Italian
+- Dutch
 - Norwegian
 - Russian
 - Swedish
@@ -40,7 +39,7 @@ https://www.nxp.com/files-static/soft_dev_tools/software/programmers/CFFLASHER.z
 This tool runs on MS Windows and requires additional hardware.
 
 2) Didier Méquignon's FLASH060.PRG
-http://didierm.pagesperso-orange.fr/firebee.htm
+https://didierm.pagesperso-orange.fr/firebee.htm
 Get it from the tos060.lzh archive, in the tos060/flash.too folder.
 On your FireBee, start FireTOS, run FLASH060.PRG and flash emutosfb.s19.
 You can also use FLASH_CF.PRG from EmuTOS itself.

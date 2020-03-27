@@ -1,7 +1,7 @@
 /*
  * ide.c - Falcon IDE functions
  *
- * Copyright (C) 2011-2018 The EmuTOS development team
+ * Copyright (C) 2011-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -19,8 +19,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
 #include "blkdev.h"
 #include "delay.h"
@@ -31,8 +30,8 @@
 #include "string.h"
 #include "tosvars.h"
 #include "vectors.h"
-#include "kprint.h"
 #include "machine.h"
+#include "has.h"
 #include "cookie.h"
 #include "coldfire.h"
 #include "processor.h"
@@ -71,16 +70,19 @@ struct IDE
 #define IDE_WRITE_REGISTER_PAIR(r,a,b) \
     *(volatile UWORD *)&ide_interface->r = MAKE_UWORD(a,b)
 
-#define IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(a,b) \
+/* The interface 'i' is passed to these macros only for compatibility.
+   In M548X, the macros always use the only IDE interface on the board. */
+
+#define IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(i,a,b) \
     IDE_WRITE_REGISTER_PAIR(sector_number,a,b)
 
-#define IDE_WRITE_CYLINDER_HIGH_CYLINDER_LOW(a) \
+#define IDE_WRITE_CYLINDER_HIGH_CYLINDER_LOW(i,a) \
     *(volatile UWORD *)&ide_interface->cylinder_high = a
 
-#define IDE_WRITE_COMMAND_HEAD(a,b) \
+#define IDE_WRITE_COMMAND_HEAD(i,a,b) \
     IDE_WRITE_REGISTER_PAIR(command,a,b)
 
-#define IDE_WRITE_CONTROL(a) \
+#define IDE_WRITE_CONTROL(i,a) \
     IDE_WRITE_REGISTER_PAIR(filler0e,0,a)
 
 /*
@@ -89,45 +91,45 @@ struct IDE
  * same time as the head register.  see the x3t10 ata-2 and ata-3
  * specifications for details.
  */
-#define IDE_WRITE_HEAD(a) \
+#define IDE_WRITE_HEAD(i,a) \
     IDE_WRITE_REGISTER_PAIR(command,IDE_CMD_NOP,a)
 
 #define IDE_READ_REGISTER_PAIR(r) \
     *(volatile UWORD *)&ide_interface->r
 
-#define IDE_READ_SECTOR_NUMBER_SECTOR_COUNT() \
+#define IDE_READ_SECTOR_NUMBER_SECTOR_COUNT(i) \
     IDE_READ_REGISTER_PAIR(sector_number)
 
-#define IDE_READ_CYLINDER_HIGH_CYLINDER_LOW() \
+#define IDE_READ_CYLINDER_HIGH_CYLINDER_LOW(i) \
     IDE_READ_REGISTER_PAIR(cylinder_high)
 
-#define IDE_READ_STATUS()   ide_interface->command
+#define IDE_READ_STATUS(i)   ide_interface->command
 
-#define IDE_READ_ERROR()    ide_interface->features
+#define IDE_READ_ERROR(i)    ide_interface->features
 
-#define IDE_READ_ALT_STATUS() \
+#define IDE_READ_ALT_STATUS(i) \
     IDE_READ_REGISTER_PAIR(filler0e)
 
 #else
 
 /* On standard hardware, the IDE registers can be accessed as single bytes. */
 
-#define IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(a,b) \
-    { interface->sector_number = a; interface->sector_count = b; }
-#define IDE_WRITE_CYLINDER_HIGH_CYLINDER_LOW(a) \
-    { interface->cylinder_high = HIBYTE(a); interface->cylinder_low = LOBYTE(a); }
-#define IDE_WRITE_COMMAND_HEAD(a,b) \
-    { interface->head = b; interface->command = a; }
-#define IDE_WRITE_CONTROL(a)    interface->control = a
-#define IDE_WRITE_HEAD(a)       interface->head = a
+#define IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(i,a,b) \
+    { i->sector_number = a; i->sector_count = b; }
+#define IDE_WRITE_CYLINDER_HIGH_CYLINDER_LOW(i,a) \
+    { i->cylinder_high = HIBYTE(a); i->cylinder_low = LOBYTE(a); }
+#define IDE_WRITE_COMMAND_HEAD(i,a,b) \
+    { i->head = b; i->command = a; }
+#define IDE_WRITE_CONTROL(i,a)    i->control = a
+#define IDE_WRITE_HEAD(i,a)       i->head = a
 
-#define IDE_READ_STATUS()       interface->command
-#define IDE_READ_ALT_STATUS()   interface->control
-#define IDE_READ_ERROR()        interface->features
-#define IDE_READ_SECTOR_NUMBER_SECTOR_COUNT() \
-    MAKE_UWORD(interface->sector_number, interface->sector_count)
-#define IDE_READ_CYLINDER_HIGH_CYLINDER_LOW() \
-    MAKE_UWORD(interface->cylinder_high, interface->cylinder_low)
+#define IDE_READ_STATUS(i)        i->command
+#define IDE_READ_ALT_STATUS(i)    i->control
+#define IDE_READ_ERROR(i)         i->features
+#define IDE_READ_SECTOR_NUMBER_SECTOR_COUNT(i) \
+    MAKE_UWORD(i->sector_number, i->sector_count)
+#define IDE_READ_CYLINDER_HIGH_CYLINDER_LOW(i) \
+    MAKE_UWORD(i->cylinder_high, i->cylinder_low)
 
 #endif /* MACHINE_M548X */
 
@@ -315,20 +317,15 @@ static int wait_for_not_BSY(volatile struct IDE *interface,LONG timeout);
  * set a special value in the sector number/count registers of
  * device 0 in the specified interface
  *
- * we wait a max time for BSY to drop since this is called during
- * initialisation, which can be invoked by power-on/reset
  */
-static void set_interface_magic(WORD ifnum)
+static void set_interface_magic(volatile struct IDE *interface, WORD ifnum)
 {
-    volatile struct IDE *interface = ifinfo[ifnum].base_address;
     UBYTE secnum = SECNUM_MAGIC + ifnum;
     UBYTE seccnt = SECCNT_MAGIC + ifnum;
 
-    IDE_WRITE_CONTROL(IDE_CONTROL_nIEN);/* no interrupts please */
-    wait_for_not_BSY(interface,LONG_TIMEOUT);
-    IDE_WRITE_HEAD(IDE_DEVICE(0));
+    IDE_WRITE_HEAD(interface,IDE_DEVICE(0));
     DELAY_400NS;
-    IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(secnum,seccnt);
+    IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(interface,secnum,seccnt);
 }
 
 /*
@@ -337,47 +334,105 @@ static void set_interface_magic(WORD ifnum)
  *
  * returns 1 if OK, 0 otherwise
  */
-static int check_interface_magic(WORD ifnum)
+static int check_interface_magic(volatile struct IDE *interface, WORD ifnum)
 {
-    volatile struct IDE *interface = ifinfo[ifnum].base_address;
     UWORD numcnt = MAKE_UWORD(SECNUM_MAGIC + ifnum, SECCNT_MAGIC + ifnum);
 
-    if (IDE_READ_SECTOR_NUMBER_SECTOR_COUNT() == numcnt)
+    if (IDE_READ_SECTOR_NUMBER_SECTOR_COUNT(interface) == numcnt)
         return 1;
 
     return 0;
 }
+
+/* Enum to capture interface status during ide_interface_exists(). */
+enum ide_if_status
+{
+    IDE_IF_NOTCHECKED,
+    IDE_IF_NOTPRESENT,
+    IDE_IF_ISGHOST,
+    IDE_IF_PRESENT
+};
 
 /*
  * determine if a specific interface really exists, allowing for
  * incomplete hardware address decoding and twisted cables
  *
  * method:
- * 1. write a magic number (dependent on the interface number) to
- *    the sector number/count registers
- * 2. read it back & check that it matches; if it does, goto (4)
- * 3. otherwise we assume a twisted cable, adjust the interface
- *    base address, and write the number again
- * 4. check if the interface 0 magic number has been changed; if
- *    so, this is a ghost interface & we reject it
+ * as soon as the BSY bit on an interface is low:
+ *    write a magic number (dependent on the interface number) to
+ *    the sector number/count registers and check...
+ *    a. if the magic number is read back correctly and the
+ *       interface 0 magic number is unchanged
+ *       => device found
+ *    b. if the magic number is read back correctly but the
+ *       interface 0 magic number is changed
+ *       => ghost interface
+ *    c. if the magic number is not read back correctly
+ *       => no device present
+ * break if...
+ *    a. a device is found
+ *    b. no device is found on both regular and twisted interfaces
+ *    c. a timeout occurs, i.e., both interfaces stayed BSY
  */
 static int ide_interface_exists(WORD ifnum)
 {
-    int rc = 0;             /* assume it doesn't exist */
+    volatile struct IDE *regular_iface = ifinfo[ifnum].base_address;
+    volatile struct IDE *twisted_iface = (volatile struct IDE *)(((ULONG)ifinfo[ifnum].base_address)-1);
+    volatile struct IDE *first_iface   = ifinfo[0].base_address;
+    enum ide_if_status  regular_iface_status = IDE_IF_NOTCHECKED;
+    enum ide_if_status  twisted_iface_status = IDE_IF_NOTCHECKED;
 
-    set_interface_magic(ifnum);
-    if (!check_interface_magic(ifnum)) {
-        /*
-        * if magic can't be read back, then assume twisted cable,
-        * hence, interface base address needs to be offset by 1
-        */
-        ifinfo[ifnum].base_address = (volatile struct IDE *)(((ULONG)ifinfo[ifnum].base_address)-1);
-        ifinfo[ifnum].twisted_cable = TRUE;
-        set_interface_magic(ifnum);
+    /* We wait a max time for BSY to drop since this is called during
+     * initialisation, which can be invoked by power-on/reset.
+     */
+    LONG next = hz_200 + LONG_TIMEOUT;
+
+    IDE_WRITE_CONTROL(regular_iface,IDE_CONTROL_nIEN);/* no interrupts please */
+    IDE_WRITE_CONTROL(twisted_iface,IDE_CONTROL_nIEN);/* no interrupts please */
+
+    DELAY_400NS;
+    while ((hz_200 < next) &&
+        ((regular_iface_status == IDE_IF_NOTCHECKED) || (twisted_iface_status == IDE_IF_NOTCHECKED))) {
+        /* Check BSY on regular interface. */
+        if ((IDE_READ_ALT_STATUS(regular_iface) & IDE_STATUS_BSY) == 0) {
+            /* Check it exists by setting and reading back magic number. */
+            KDEBUG(("checking ide interface %d\n", ifnum));
+            set_interface_magic(regular_iface, ifnum);
+            if (check_interface_magic(regular_iface, ifnum)) {
+                ifinfo[ifnum].twisted_cable = FALSE;
+                regular_iface_status = IDE_IF_PRESENT;
+                /* Check that it is not a ghost interface. */
+                if ((ifnum > 0) && (!check_interface_magic(first_iface, 0))) {
+                    regular_iface_status = IDE_IF_ISGHOST;
+                }
+                break;
+            } else {
+                regular_iface_status = IDE_IF_NOTPRESENT;
+            }
+        }
+
+        /* Check BSY on twisted interface. */
+        if ((IDE_READ_ALT_STATUS(twisted_iface) & IDE_STATUS_BSY) == 0) {
+            /* Check it exists by setting and reading back magic number. */
+            KDEBUG(("checking ide interface %d with twisted cable\n", ifnum));
+            set_interface_magic(twisted_iface, ifnum);
+            if (check_interface_magic(twisted_iface, ifnum)) {
+                ifinfo[ifnum].base_address = twisted_iface;
+                ifinfo[ifnum].twisted_cable = TRUE;
+                twisted_iface_status = IDE_IF_PRESENT;
+                /* Check that it is not a ghost interface. */
+                if ((ifnum > 0) && (!check_interface_magic(first_iface, 0))) {
+                    twisted_iface_status = IDE_IF_ISGHOST;
+                }
+                break;
+            } else {
+                twisted_iface_status = IDE_IF_NOTPRESENT;
+            }
+        }
     }
-    rc = check_interface_magic(0);
 
-    KDEBUG(("ide interface %d %s %s",ifnum,rc?"exists":"not present",ifinfo[ifnum].twisted_cable?"(twisted cable)":""));
+    int rc = (regular_iface_status == IDE_IF_PRESENT) || (twisted_iface_status == IDE_IF_PRESENT);
+    KDEBUG(("ide interface %d %s %s\n",ifnum,rc?"exists":"not present",ifinfo[ifnum].twisted_cable?"(twisted cable)":""));
 
     return rc;
 }
@@ -494,7 +549,7 @@ static int wait_for_signature(volatile struct IDE *interface,LONG timeout)
 
     DELAY_400NS;
     while(hz_200 < next) {
-        n = IDE_READ_SECTOR_NUMBER_SECTOR_COUNT();
+        n = IDE_READ_SECTOR_NUMBER_SECTOR_COUNT(interface);
         if (n == 0x0101)
             return 0;
     }
@@ -510,9 +565,9 @@ static void ide_reset(UWORD ifnum)
     int err;
 
     /* set, then reset, the soft reset bit */
-    IDE_WRITE_CONTROL((IDE_CONTROL_SRST|IDE_CONTROL_nIEN));
+    IDE_WRITE_CONTROL(interface,(IDE_CONTROL_SRST|IDE_CONTROL_nIEN));
     DELAY_5US;
-    IDE_WRITE_CONTROL(IDE_CONTROL_nIEN);
+    IDE_WRITE_CONTROL(interface,IDE_CONTROL_nIEN);
     DELAY_400NS;
 
     /* if device 0 exists, wait for it to clear BSY */
@@ -528,7 +583,7 @@ static void ide_reset(UWORD ifnum)
         err = 0;
         if (wait_for_signature(interface,LONG_TIMEOUT))
             err = 1;
-        else if ((IDE_READ_ALT_STATUS() & IDE_STATUS_BSY) == 0)
+        else if ((IDE_READ_ALT_STATUS(interface) & IDE_STATUS_BSY) == 0)
             err = 1;
         if (err) {
             info->dev[1].type = DEVTYPE_NONE;
@@ -565,16 +620,16 @@ static void ide_detect_devices(UWORD ifnum)
 
     MAYBE_UNUSED(interface);
 
-    IDE_WRITE_CONTROL(IDE_CONTROL_nIEN);    /* no interrupts please */
+    IDE_WRITE_CONTROL(interface,IDE_CONTROL_nIEN);    /* no interrupts please */
 
     /* initial check for devices */
     for (i = 0; i < 2; i++) {
-        IDE_WRITE_HEAD(IDE_DEVICE(i));
+        IDE_WRITE_HEAD(interface,IDE_DEVICE(i));
         DELAY_400NS;
-        IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(0xaa,0x55);
-        IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(0x55,0xaa);
-        IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(0xaa,0x55);
-        if (IDE_READ_SECTOR_NUMBER_SECTOR_COUNT() == 0xaa55) {
+        IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(interface,0xaa,0x55);
+        IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(interface,0x55,0xaa);
+        IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(interface,0xaa,0x55);
+        if (IDE_READ_SECTOR_NUMBER_SECTOR_COUNT(interface) == 0xaa55) {
             info->dev[i].type = DEVTYPE_UNKNOWN;
             KDEBUG(("IDE i/f %d device %d detected\n",ifnum,i));
         } else
@@ -584,16 +639,16 @@ static void ide_detect_devices(UWORD ifnum)
     }
 
     /* recheck after soft reset, also detect ata/atapi */
-    IDE_WRITE_HEAD(IDE_DEVICE(0));
+    IDE_WRITE_HEAD(interface,IDE_DEVICE(0));
     DELAY_400NS;
     ide_reset(ifnum);
 
     for (i = 0; i < 2; i++) {
-        IDE_WRITE_HEAD(IDE_DEVICE(i));
+        IDE_WRITE_HEAD(interface,IDE_DEVICE(i));
         DELAY_400NS;
-        if (IDE_READ_SECTOR_NUMBER_SECTOR_COUNT() == 0x0101) {
-            status = IDE_READ_STATUS();
-            signature = IDE_READ_CYLINDER_HIGH_CYLINDER_LOW();
+        if (IDE_READ_SECTOR_NUMBER_SECTOR_COUNT(interface) == 0x0101) {
+            status = IDE_READ_STATUS(interface);
+            signature = IDE_READ_CYLINDER_HIGH_CYLINDER_LOW(interface);
             info->dev[i].type = ide_decode_type(status,signature);
         }
     }
@@ -620,7 +675,7 @@ static int wait_for_not_BSY(volatile struct IDE *interface,LONG timeout)
 
     DELAY_400NS;
     while(hz_200 < next) {
-        if ((IDE_READ_ALT_STATUS() & IDE_STATUS_BSY) == 0)
+        if ((IDE_READ_ALT_STATUS(interface) & IDE_STATUS_BSY) == 0)
             return 0;
     }
 
@@ -634,7 +689,7 @@ static int wait_for_not_BSY_not_DRQ(volatile struct IDE *interface,LONG timeout)
 
     DELAY_400NS;
     while(hz_200 < next) {
-        if ((IDE_READ_ALT_STATUS() & (IDE_STATUS_BSY|IDE_STATUS_DRQ)) == 0)
+        if ((IDE_READ_ALT_STATUS(interface) & (IDE_STATUS_BSY|IDE_STATUS_DRQ)) == 0)
             return 0;
     }
 
@@ -652,7 +707,7 @@ static int ide_select_device(volatile struct IDE *interface,UWORD dev)
     if (wait_for_not_BSY_not_DRQ(interface,SHORT_TIMEOUT))
         return ERR;
 
-    IDE_WRITE_HEAD(IDE_DEVICE(dev));
+    IDE_WRITE_HEAD(interface,IDE_DEVICE(dev));
 
     if (wait_for_not_BSY_not_DRQ(interface,SHORT_TIMEOUT))
         return ERR;
@@ -667,9 +722,9 @@ static void ide_rw_start(volatile struct IDE *interface,UWORD dev,ULONG sector,U
 {
     KDEBUG(("ide_rw_start(%p, %u, %lu, %u, 0x%02x)\n", interface, dev, sector, count, cmd));
 
-    IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(LOBYTE(sector), LOBYTE(count));
-    IDE_WRITE_CYLINDER_HIGH_CYLINDER_LOW((UWORD)((sector & 0xffff00) >> 8));
-    IDE_WRITE_COMMAND_HEAD(cmd,IDE_MODE_LBA|IDE_DEVICE(dev)|(UBYTE)((sector>>24)&0x0f));
+    IDE_WRITE_SECTOR_NUMBER_SECTOR_COUNT(interface,LOBYTE(sector), LOBYTE(count));
+    IDE_WRITE_CYLINDER_HIGH_CYLINDER_LOW(interface,(UWORD)((sector & 0xffff00) >> 8));
+    IDE_WRITE_COMMAND_HEAD(interface,cmd,IDE_MODE_LBA|IDE_DEVICE(dev)|(UBYTE)((sector>>24)&0x0f));
 }
 
 /*
@@ -688,7 +743,7 @@ static LONG ide_nodata(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count)
     if (wait_for_not_BSY(interface,SHORT_TIMEOUT))  /* should vary depending on command? */
         return EGENRL;
 
-    status = IDE_READ_STATUS();     /* status, clear pending interrupt */
+    status = IDE_READ_STATUS(interface);     /* status, clear pending interrupt */
     if (status & (IDE_STATUS_BSY|IDE_STATUS_DF|IDE_STATUS_DRQ|IDE_STATUS_ERR))
         return EGENRL;
 
@@ -722,7 +777,7 @@ static void ide_get_data_32(volatile struct IDE *interface,UBYTE *buffer,ULONG b
  */
 static void ide_get_data(volatile struct IDE *interface,UBYTE *buffer,UWORD numsecs,int need_byteswap)
 {
-    ULONG bufferlen = (ULONG)numsecs * SECTOR_SIZE;
+    ULONG bufferlen = numsecs * SECTOR_SIZE;
     XFERWIDTH *p = (XFERWIDTH *)buffer;
     XFERWIDTH *end = (XFERWIDTH *)(buffer + bufferlen);
 
@@ -826,11 +881,11 @@ static LONG ide_read(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UB
         if (wait_for_not_BSY(interface,XFER_TIMEOUT))
             return EREADF;
 
-        status1 = IDE_READ_ALT_STATUS();/* alternate status, ignore */
-        status1 = IDE_READ_STATUS();    /* status, clear pending interrupt */
+        status1 = IDE_READ_ALT_STATUS(interface);/* alternate status, ignore */
+        status1 = IDE_READ_STATUS(interface);    /* status, clear pending interrupt */
 
         numsecs = (count>spi) ? spi : count;
-        xferlen = (ULONG)numsecs * SECTOR_SIZE;
+        xferlen = numsecs * SECTOR_SIZE;
 
         rc = E_OK;
         if (status1 & IDE_STATUS_DRQ) {
@@ -852,8 +907,8 @@ static LONG ide_read(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UB
         count -= numsecs;
     }
 
-    status2 = IDE_READ_ALT_STATUS();    /* alternate status, ignore */
-    status2 = IDE_READ_STATUS();        /* status, clear pending interrupt */
+    status2 = IDE_READ_ALT_STATUS(interface);    /* alternate status, ignore */
+    status2 = IDE_READ_STATUS(interface);        /* status, clear pending interrupt */
 
     if (status2 & (IDE_STATUS_BSY|IDE_STATUS_DF|IDE_STATUS_DRQ|IDE_STATUS_ERR))
         rc = EREADF;
@@ -866,7 +921,7 @@ static LONG ide_read(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,UB
  */
 static void ide_put_data(volatile struct IDE *interface,UBYTE *buffer,UWORD numsecs,int need_byteswap)
 {
-    ULONG bufferlen = (ULONG)numsecs * SECTOR_SIZE;
+    ULONG bufferlen = numsecs * SECTOR_SIZE;
     XFERWIDTH *p = (XFERWIDTH *)buffer;
     XFERWIDTH *end = (XFERWIDTH *)(buffer + bufferlen);
 
@@ -960,10 +1015,10 @@ static LONG ide_write(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,U
         ULONG xferlen;
 
         numsecs = (count>spi) ? spi : count;
-        xferlen = (ULONG)numsecs * SECTOR_SIZE;
+        xferlen = numsecs * SECTOR_SIZE;
 
         rc = E_OK;
-        status1 = IDE_READ_STATUS();    /* status, clear pending interrupt */
+        status1 = IDE_READ_STATUS(interface);    /* status, clear pending interrupt */
         if (status1 & IDE_STATUS_DRQ) {
             if (info->twisted_cable) {
                 ide_put_data((volatile struct IDE *)(((ULONG)interface)+1),buffer,numsecs,need_byteswap);
@@ -986,8 +1041,8 @@ static LONG ide_write(UBYTE cmd,UWORD ifnum,UWORD dev,ULONG sector,UWORD count,U
         count -= numsecs;
     }
 
-    status2 = IDE_READ_ALT_STATUS();    /* alternate status (ignore) */
-    status2 = IDE_READ_STATUS();        /* status, clear pending interrupt */
+    status2 = IDE_READ_ALT_STATUS(interface);    /* alternate status (ignore) */
+    status2 = IDE_READ_STATUS(interface);        /* status, clear pending interrupt */
     if (status2 & (IDE_STATUS_BSY|IDE_STATUS_DF|IDE_STATUS_DRQ|IDE_STATUS_ERR))
         rc = EWRITF;
 
@@ -1032,7 +1087,7 @@ LONG ide_rw(WORD rw,LONG sector,WORD count,UBYTE *buf,WORD dev,BOOL need_byteswa
 
         p = use_tmpbuf ? dskbufp : buf;
         if (rw && use_tmpbuf)
-            memcpy(p,buf,(LONG)numsecs*SECTOR_SIZE);
+            memcpy(p,buf,numsecs*SECTOR_SIZE);
 
         ret = rw ? ide_write(IDE_CMD_WRITE_SECTOR,ifnum,dev,sector,numsecs,p,need_byteswap)
                 : ide_read(IDE_CMD_READ_SECTOR,ifnum,dev,sector,numsecs,p,need_byteswap);
@@ -1045,9 +1100,9 @@ LONG ide_rw(WORD rw,LONG sector,WORD count,UBYTE *buf,WORD dev,BOOL need_byteswa
         }
 
         if (!rw && use_tmpbuf)
-            memcpy(buf,p,(LONG)numsecs*SECTOR_SIZE);
+            memcpy(buf,p,numsecs*SECTOR_SIZE);
 
-        buf += (ULONG)numsecs*SECTOR_SIZE;
+        buf += numsecs*SECTOR_SIZE;
         sector += numsecs;
         count -= numsecs;
     }
@@ -1070,7 +1125,7 @@ static WORD clear_multiple_mode(UWORD ifnum,UWORD dev)
     if ((info->dev[dev].options&MULTIPLE_MODE_ACTIVE) == 0)
         return 0;
 
-    if ((IDE_READ_ERROR()&IDE_ERROR_ABRT) == 0)
+    if ((IDE_READ_ERROR(interface)&IDE_ERROR_ABRT) == 0)
         return 0;
 
     KDEBUG(("Clearing multiple sector mode for ifnum %d dev %d\n",ifnum,dev));

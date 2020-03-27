@@ -2,16 +2,16 @@
  * vdimain.c - the VDI screen driver dispatcher
  *
  * Copyright (C) 1999 Caldera, Inc.
- *               2002-2018 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "vdi_defs.h"
-#include "kprint.h"
+#include "lineavars.h"
+#include "asm.h"
 
 /* forward prototypes */
 void screen(void);
@@ -19,9 +19,11 @@ void screen(void);
 
 WORD flip_y;                    /* True if magnitudes being returned */
 
+typedef void (*VDI_OP_T)(Vwk *); /* Pointer type to VDI operation */
+#define vdi_v_nop ((VDI_OP_T)just_rts) /* VDI dummy operation */
 
 /* Two main jumptables for VDI functions */
-static void (* const jmptb1[])(Vwk *) = {
+static const VDI_OP_T jmptb1[] = {
     vdi_v_opnwk,            /*   1 */
     vdi_v_clswk,            /*   2 */
     vdi_v_clrwk,            /*   3 */
@@ -50,7 +52,7 @@ static void (* const jmptb1[])(Vwk *) = {
     vdi_vq_color,           /*  26 */
     vdi_v_nop,              /*  27 - vq_cellarray, not usually implemented by drivers */
     vdi_v_locator,          /*  28 */
-    vdi_v_valuator,         /*  29 */
+    vdi_v_nop,              /*  29 - vdi_v_valuator, not usually implemented by drivers */
     vdi_v_choice,           /*  30 */
     vdi_v_string,           /*  31 */
     vdi_vswr_mode,          /*  32 */
@@ -63,7 +65,7 @@ static void (* const jmptb1[])(Vwk *) = {
     vdi_vst_alignment       /*  39 */
 };
 
-static void(* const jmptb2[])(Vwk *) = {
+static const VDI_OP_T jmptb2[] = {
     vdi_v_opnvwk,           /* 100 */
     vdi_v_clsvwk,           /* 101 */
     vdi_vq_extnd,           /* 102 */
@@ -96,7 +98,7 @@ static void(* const jmptb2[])(Vwk *) = {
     vdi_vs_clip,            /* 129 */
     vdi_vqt_name,           /* 130 */
     vdi_vqt_fontinfo,       /* 131 */
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
     vdi_v_nop,              /* 132 */ /* vqt_justified (PC-GEM) */
     vdi_v_nop,              /* 133 */ /* vs_grayoverride (PC-GEM/3) */
     vdi_vex_wheelv          /* 134 */ /* (Milan), also v_pat_rotate (PC-GEM/3) */
@@ -140,8 +142,28 @@ void screen(void)
     if (opcode >= 1 && opcode < 1+JMPTB1_ENTRIES) {
         (*jmptb1[opcode - 1]) (vwk);
     }
-
     else if (opcode >= 100 && opcode < 100+JMPTB2_ENTRIES) {
         (*jmptb2[opcode - 100]) (vwk);
+    }
+
+    /*
+     * set some lineA variables from the vwk info (as long as
+     * the workstation is valid)
+     */
+    if (opcode != 2 && opcode != 101) {     /* if neither v_clswk() nor v_clsvwk() */
+        /*
+         * the following assignments are not required by EmuTOS, but
+         * ensure that the values in the lineA variables mirror those
+         * in the current virtual workstation, just like in Atari TOS.
+         */
+        CUR_FONT = vwk->cur_font;
+        WRT_MODE = vwk->wrt_mode;
+        CLIP = vwk->clip;
+        XMINCL = vwk->xmn_clip;
+        YMINCL = vwk->ymn_clip;
+        XMAXCL = vwk->xmx_clip;
+        YMAXCL = vwk->ymx_clip;
+        font_ring[2] = vwk->loaded_fonts;
+        CUR_WORK = vwk;
     }
 }

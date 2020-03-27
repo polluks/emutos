@@ -1,7 +1,7 @@
 /*
  * vectors.S - exception vectors
  *
- * Copyright (C) 2001-2017 by the EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -16,10 +16,10 @@
         .globl  _init_exc_vec
         .globl  _init_user_vec
 
-        .globl  _gemtrap        // call VDI/AES
         .globl  _biostrap       // call BIOS from C
         .globl  _xbiostrap      // call XBIOS from C
         .globl  _xbios_unimpl
+        .globl  _supexec
 
 #if CONF_WITH_BUS_ERROR
         .globl  _check_read_byte
@@ -34,7 +34,6 @@
 #if CONF_WITH_ADVANCED_CPU
         .globl  _int_unimpint
 #endif
-        .globl  _just_rts
         .globl  _just_rte
         .globl  _keyclick
         .globl  _trap_save_area
@@ -56,6 +55,7 @@
         .extern _timer_ms
         .extern _v_bas_ad
 
+        .extern _detect_monitor_change  // screen.c
         .extern _blink          // conout.c - console output
 
 // Note: this scheme is designed to print the exception number
@@ -100,10 +100,7 @@
 
         .text
 
-
-
 /* basically initialize the 62 exception vectors. */
-
 _init_exc_vec:
         clr.l   _proc_lives.w
         lea     deflt_vec_table, a0
@@ -120,11 +117,9 @@ set_vec:
 #endif
 // The RTS below is shared for other purposes.
 buggy_jit_save_registers_before_bus_error:
-_just_rts:
         rts
 
 /* initialize the 192 user vectors. */
-
 _init_user_vec:
         lea     user_vec, a0
         lea     256, a1
@@ -148,7 +143,6 @@ set_uvec:
  * the former method will allow any_vec to display the correct vector
  * number and report a meaningful panic message.
  */
-
 deflt_vec_table:
 buserr_vec:
         bsr.s   any_vec         // vector 2
@@ -245,6 +239,22 @@ any_vec:
         lsr.l   #1, d0
         add.l   #1, d0
         move.l  d0, _proc_enum.w
+
+#if CONF_WITH_ADVANCED_CPU && !defined(__mcoldfire__)
+        // D0 is 1 if the exception number could not be computed
+        subq    #1, d0
+        bne     dump_stack
+        // exception vector offset is present on stack for 68010 and above
+        tst.w   _longframe
+        beq     dump_stack
+        move.w  6(sp), d0
+        ext.l   d0
+        andi.l  #0xfff, d0
+        lsr.l   #2, d0
+        move.l  d0, _proc_enum.w
+#endif /* CONF_WITH_ADVANCED_CPU && !defined(__mcoldfire__) */
+
+dump_stack:
         // dump 16 words from the stack
         movem.l (sp),d0-d7
 #ifdef __mcoldfire__
@@ -263,47 +273,6 @@ any_vec:
         // may 2015, this is about 460 bytes
         lea     panic_stack,sp
         jmp     _dopanic
-
-
-
-/*
- * _gemtrap - VDI trap dispatcher
- *
- * This functions checks for a trap-2 VDI call and jumps to the VDI dispatcher
- * then. It also provides a simple vq_gdos call and the "d0=-1" query function
- * that returns the dispatcher's address.
- *
- * Note that this function does not care about AES calls since the AES later
- * hooks into the trap-2 vector itself.
- *
- */
-
-_gemtrap:
-        cmp.w   #0x73,d0                // VDI call?
-        jne     no_vdi
-        jsr     _GSX_ENTRY
-// The RTE below is shared for other purposes.
-_just_rte:
-        rte
-
-no_vdi:
-        cmp.w   #0xfffe,d0              // vq_gdos call?
-        jeq     what_gdos
-
-        cmp.w   #0xffff,d0              // query for jsr:able address?
-        jeq     query
-
-        rte
-
-
-what_gdos:
-        move.l  #-2, d0                 // -2  -  no GDOS installed
-        rte
-
-query:
-        move.l  #_GSX_ENTRY,d0          // Return address of VDI dispatcher
-        rte
-
 
 #if CONF_WITH_ATARI_VIDEO
 
@@ -339,11 +308,17 @@ is_ipl:
 
 #endif /* CONF_WITH_ATARI_VIDEO */
 
-
 /*
  * _int_vbl - Int 0x70 - VBL interrupt
  *
- * no video resolution change is done.
+ * The sequence of events within the VBL interrupt handler
+ * -------------------------------------------------------
+ * According to p.47 of "A Hitchhiker's Guide to the BIOS (November 1985)",
+ * vblqueue processing is done at the end of interrupt handling.  Both
+ * Atari TOS 1.04 and EmuTOS follow this (except that both do screen dump
+ * handling afterwards).  However, Atari TOS 2/3/4 do vblqueue handling
+ * right at the beginning of interrupt handling.  It is unclear whether
+ * this change has any practical consequences.
  */
 
 _int_vbl:
@@ -355,9 +330,9 @@ _int_vbl:
         subq.l  #1, d0
         move.w  d0, _vblsem.w
 #else
-        subq.w  #1, _vblsem.w           // check vbl semaphore
+        subq.w  #1, _vblsem.w           // check VBL semaphore
 #endif
-        jmi     vbl_end                 // if VBl routine disabled -> end
+        jmi     vbl_end                 // if VBL routine disabled -> end
 
 #ifdef __mcoldfire__
         lea     -56(sp), sp
@@ -367,8 +342,10 @@ _int_vbl:
 #endif
         addq.l  #1, _vbclock.w          // count number of VBL interrupts
 
-        // TODO: Check for monitor switching on normal ST(E) here,
-        // and jump to _swv_vec if necessary...
+#if CONF_WITH_ATARI_VIDEO
+// check for monitor switching and jump to _swv_vec if necessary...
+        jsr     _detect_monitor_change
+#endif
 
         jsr     _blink                  // blink cursor
 
@@ -482,7 +459,13 @@ vbl_queue_next:
 vbl_no_queue:
 
         // screen hardcopy
-        // (not done)
+        tst.w   _dumpflg.w
+        jne     vbl_no_dump
+        move.l  _dump_vec.w,a0
+        jsr     (a0)
+        moveq  #-1,d0
+        move.w  d0,_dumpflg.w
+vbl_no_dump:
 
 #ifdef __mcoldfire__
         movem.l (sp), d1-d7/a0-a6       // restore registers
@@ -506,8 +489,6 @@ vbl_end:
 #else
         rts
 #endif
-
-
 
 // ==== Timer C interrupt handler ============================================
 
@@ -618,7 +599,6 @@ _default_etv_critic:
         ext.l   d0
         rts
 
-
 #ifndef __mcoldfire__
 
 /*
@@ -644,15 +624,12 @@ ii_back:
         movem.l (sp)+,d0/a0
         jra     illg_vec                // go directly to our panic handler
 
-
-
 /*
  * _int_priv - privileged instruction handler
  *
  * Convert a privileged 'MOVE SR,...' to 'MOVE CCR,...'
  * (see bios/processor.h for the full story)
  */
-
 _int_priv:
         movem.l d0/a0,-(sp)             // saving d0 and a0 while we test
         movea.l 10(sp),a0               // the offending address
@@ -664,16 +641,16 @@ _int_priv:
         ori.w   #0x200,(a0)             // make it MOVE CCR,XX
 
 #if CONF_WITH_ADVANCED_CPU
+        cmpi.b  #20,_mcpu+3
+        jeq     pi_020or030
         cmpi.b  #30,_mcpu+3
         jne     pi_not30
 
-        // on 68030, invalidate the i-cache line we just modified
-        move.l  a0,d0                   // get full address
-        andi.l  #0x000000fc,d0          //  zero out unused bits
-        MOVEC_D0_CAAR                   //   & set caar -> index/longword of cache line
+pi_020or030:
+        // on 68020/030, invalidate the entire tiny instruction cache
         MOVEC_CACR_D0                   // get current cacr
-        ori.b   #0x04,d0                // set the CEI bit
-        MOVEC_D0_CACR                   // invalidate the line
+        ori.b   #0x08,d0                // set the CI bit
+        MOVEC_D0_CACR                   // invalidate the I cache
         jra     pi_next
 
 pi_not30:
@@ -698,8 +675,6 @@ pi_back:
         jra     priv_vec                // go directly to our panic handler
 
 #endif /* __mcoldfire__ */
-
-
 
 #if CONF_WITH_ADVANCED_CPU
 
@@ -1007,7 +982,7 @@ mrb_exit:
 movep_read_err:
         move.l  a3,a0
         move.l  #FSLW_READ,d0
-                                            // drop through
+                                            // fall through movep_err_exit
 /*
  * exit for read/write errors
  *
@@ -1152,22 +1127,28 @@ bx_nolong2:
         move.w  (a1)+,-(sp)
 #endif
         move.l  a1, _savptr.w
+// The RTE below is shared for other purposes.
+_just_rte:
         rte                     // return with return value in D0
-
-
 
 /*
  * (X)BIOS unimplemented function handler.
  * These functions are called indirectly, ONLY from biosxbios.
  * The requested BIOS/XBIOS function number is in d0.
  */
-
 _xbios_unimpl:
        move.w   d0,-(sp)
        jsr      _xbios_do_unimpl
        addq.l   #2,sp
        rts
 
+/*
+ * Supexec() function handler
+ * See xbios.c for more information.
+ */
+_supexec:
+        movea.l 4(a7),a0
+        jmp     (a0)
 
 #if CONF_WITH_BUS_ERROR
 
@@ -1178,7 +1159,6 @@ _xbios_unimpl:
  * C call: int check_read_byte(long);
  * returns 0 if reading the address caused a bus error
  */
-
 _check_read_byte:
         move.l  sp,d1
         move.l  (8).w,a1
@@ -1219,7 +1199,6 @@ msgcrb:
 
 #endif /* CONF_WITH_BUS_ERROR */
 
-
 /* ==== Glue for external vectors ===========================================
  *
  * EmuTOS uses d0-d1/a0-a1 as scratch registers. However the original TOS
@@ -1236,7 +1215,6 @@ msgcrb:
 /*
  * LONG protect_v(LONG (*func)(void));
  */
-
 _protect_v:
         move.l   4(sp),a0
         move.l   a2,-(sp)
@@ -1249,7 +1227,6 @@ _protect_v:
 /*
  * LONG protect_w(LONG (*func)(WORD), WORD);
  */
-
 _protect_w:
         move.l   4(sp),a0
         move.w   8(sp),d0
@@ -1265,7 +1242,6 @@ _protect_w:
 /*
  * LONG protect_ww(LONG (*func)(WORD), WORD, WORD);
  */
-
 _protect_ww:
         move.l   4(sp),a0
         move.l   8(sp),d0
@@ -1278,11 +1254,9 @@ _protect_ww:
         move.l   (sp)+,a2
         rts
 
-
 /*
  * LONG protect_wlwwwl(LONG (*func)(), WORD, LONG, WORD, WORD, WORD, LONG);
  */
-
 _protect_wlwwwl:
         movem.l  8(sp),d0-d1/a0-a1
         move.l   a2,-(sp)
@@ -1299,7 +1273,6 @@ _protect_wlwwwl:
         move.l   (sp)+,d2
         move.l   (sp)+,a2
         rts
-
 
 /* Compendium says that the scancode is supplied in register d0. */
 _keyclick:

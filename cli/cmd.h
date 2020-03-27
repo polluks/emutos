@@ -1,7 +1,7 @@
 /*
  * EmuCON2 header
  *
- * Copyright (C) 2013-2018 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -11,7 +11,8 @@
  */
 #ifndef STANDALONE_CONSOLE
  #include "config.h"
- #include <nls.h>
+ #include "sysconf.h"
+ #include "nls.h"
 #else
  /* config.h */
  #define CONF_ATARI_HARDWARE    1
@@ -24,7 +25,7 @@
  #define gettext(a) a
 #endif
 
-#include <portab.h>
+#include "portab.h"
 
 
 /*
@@ -82,6 +83,7 @@ extern LONG jmp_xbios(WORD, ...);
 
 #define Getrez()            jmp_xbios_v(0x04)
 #define Setscreen(a,b,c,d)  jmp_xbios_llww(0x05,a,b,c,d)
+#define Setcolor(a,b)       jmp_xbios_ww(0x07,a,b)
 #define Cursconf(a,b)       jmp_xbios_ww(0x15,a,b)
 #define Kbrate(a,b)         jmp_xbios_ww(0x23,a,b)
 #define Supexec(a)          jmp_xbios_l(0x26,a)
@@ -164,7 +166,7 @@ typedef LONG FUNC(WORD argc,char **argv);
 #define ENMFIL          -49
                                 /* additional emucon-only error codes */
 #define USER_BREAK      -100        /* user interrupted long output */
-#define INVALID_PATH    -101        /* invalid component for PATH command */
+#define NOT_DIRECTORY   -101        /* path points to a file */
 #define DISK_FULL       -102
 #define CMDLINE_LENGTH  -103
 #define DIR_NOT_EMPTY   -104        /* translated from EACCDN for folders */
@@ -187,7 +189,7 @@ typedef LONG FUNC(WORD argc,char **argv);
 #define enable_cursor() escape('e')
 #define conin()         Bconin(2)
 #define constat()       Bconstat(2)
-#define conout(c)       Bconout(2,c)
+#define conout(c)       Bconout(2,(unsigned char)(c))
 
 #define LOOKUP_EXIT     (FUNC *)-1L     /* special return values from lookup_builtin() */
 #define LOOKUP_ARGS     (FUNC *)-2L
@@ -199,7 +201,7 @@ extern LONG idt_value;
 extern UWORD screen_cols, screen_rows;
 extern WORD current_res, requested_res;
 extern WORD linewrap;
-extern WORD nflops;
+extern WORD nflops_copy;
 extern DTA *dta;
 extern LONG redir_handle;
 extern char user_path[MAXPATHLEN];     /* from PATH command */
@@ -208,7 +210,6 @@ extern char user_path[MAXPATHLEN];     /* from PATH command */
  *  function prototypes
  */
 /* cmdmain.c */
-void outlong(ULONG n,WORD width,char filler);
 int valid_res(WORD res);
 
 /* cmdedit.c */
@@ -222,8 +223,8 @@ void save_history(const char *line);
 LONG exec_program(WORD argc,char **argv,char *redir_name);
 
 /* cmdint.c */
+LONG get_path(char *buf);
 LONG (*lookup_builtin(WORD argc,char **argv))(WORD,char **);
-LONG pathout_base(void);
 
 /* cmdparse.c */
 WORD parse_line(char *line,char **argv,char *redir_name);

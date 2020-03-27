@@ -1,7 +1,7 @@
 /*
  * xbios.c - C portion of XBIOS initialization and front end
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -12,19 +12,19 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "iorec.h"
 #include "tosvars.h"
+#include "bios.h"
 #include "lineavars.h"
 #include "vt52.h"
 #include "ikbd.h"
 #include "midi.h"
 #include "mfp.h"
+#include "parport.h"
 #include "serport.h"
 #include "machine.h"
+#include "has.h"
 #include "screen.h"
 #include "videl.h"
 #include "sound.h"
@@ -472,7 +472,19 @@ static LONG xbios_13(WORD *buf, LONG filler, WORD devno, WORD sectno,
  * xbios_14 - (scrdmp) Dump screen to printer.
  */
 
-/* unimplemented */
+static void scrdmp(void)
+{
+    protect_v((PFLONG)dump_vec);
+    dumpflg = -1;       /* reset to allow future dumps ... */
+}
+
+#if DBG_XBIOS
+static void xbios_14(void)
+{
+    kprintf("XBIOS: scrdmp()\n");
+    scrdmp();
+}
+#endif
 
 
 
@@ -650,7 +662,7 @@ static void xbios_1f(WORD timer, WORD control, WORD data, LONG vec)
  */
 
 #if DBG_XBIOS
-static void xbios_20(LONG ptr)
+static void xbios_20(const UBYTE *ptr)
 {
     kprintf("XBIOS: Dosound()\n");
     dosound(ptr);
@@ -659,14 +671,26 @@ static void xbios_20(LONG ptr)
 
 
 
-/*
- * xbios_21 - (setprt) Set/get printer configuration byte.
- *
- * If 'config' is -1 ($FFFF) return the current printer configuration
- * byte. Otherwise set the byte and return its old value.
- */
+#if CONF_WITH_PRINTER_PORT
 
-/* unimplemented */
+/*
+ * xbios_21 - (setprt) Set/get the desktop printer configuration word.
+ *
+ * If 'config' is not -1 ($FFFF) set the word to the new value.  Note
+ * that only bit 4 (parallel or serial) is used by EmuTOS.
+ *
+ * Always returns the old value.
+ */
+#if DBG_XBIOS
+static WORD xbios_21(WORD config)
+{
+    kprintf("XBIOS: Setprt()\n");
+    return setprt(config);
+}
+#endif
+
+#endif  /* CONF_WITH_PRINTER_PORT */
+
 
 
 /*
@@ -732,13 +756,24 @@ static void xbios_25(void)
  * BIOS or GEMDOS calls. This function is meant to allow programs
  * to hack hardware and protected locations without having to fiddle
  * with GEMDOS get/set supervisor mode call.
- * There is no rule regarding to which registers might be clobbered by the user
- * function. For safety, we assume it can clobber all of them.
+ *
+ * The normal version of supexec() is very simple and written in
+ * assembler (see vectors.S).  This allows us to avoid complications
+ * with register saving which can cause problems when the user's
+ * stack is small.
+ *
+ * The debug version lives here and is much uglier since it has to
+ * protect itself against GCC possibly generating code to use registers
+ * which might have been clobbered by the called user function.  There
+ * are no rules about this, so for safety, we assume it can clobber all
+ * of them.
  */
-
-static LONG supexec(PFLONG codeptr)
+#if DBG_XBIOS
+static LONG xbios_26(PFLONG codeptr)
 {
     register LONG retval __asm__("d0");
+
+    kprintf("XBIOS: Supexec(%p)\n", codeptr);
 
     __asm__ volatile
     (
@@ -752,13 +787,6 @@ static LONG supexec(PFLONG codeptr)
     );
 
     return retval;
-}
-
-#if DBG_XBIOS
-static LONG xbios_26(PFLONG codeptr)
-{
-    kprintf("XBIOS: Supexec(%p)\n", codeptr);
-    return supexec(codeptr);
 }
 #endif
 
@@ -1038,7 +1066,8 @@ LONG xbios_do_unimpl(WORD number)
     return number;
 }
 
-extern LONG xbios_unimpl(void);
+LONG xbios_unimpl(void);    /* defined in vectors.S */
+LONG supexec(PFLONG);       /* defined in vectors.S */
 
 
 /*
@@ -1078,7 +1107,7 @@ const PFLONG xbios_vecs[] = {
     VEC(xbios_11, random),
     VEC(xbios_12, protobt),
     VEC(xbios_13, flopver),
-    xbios_unimpl,   /* 14 scrdmp */
+    VEC(xbios_14, scrdmp),
     VEC(xbios_15, cursconf),
     VEC(xbios_16, settime),
     VEC(xbios_17, gettime),
@@ -1100,7 +1129,11 @@ const PFLONG xbios_vecs[] = {
     xbios_unimpl,   /* 1f */
 #endif
     VEC(xbios_20, dosound),
-    xbios_unimpl,   /* 21 setprt */
+#if CONF_WITH_PRINTER_PORT
+    VEC(xbios_21, setprt),
+#else
+    xbios_unimpl,   /* 21 */
+#endif
     VEC(xbios_22, kbdvbase),
     VEC(xbios_23, kbrate),
     xbios_unimpl,   /* 24 prtblk */

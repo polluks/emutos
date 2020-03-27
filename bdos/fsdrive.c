@@ -2,7 +2,7 @@
  * fsdrive.c - physical drive routines for file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2017 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -30,14 +30,14 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "biosdefs.h"
 #include "mem.h"
 #include "gemerror.h"
 #include "biosbind.h"
-#include "kprint.h"
+#include "bdosstub.h"
+#include "biosext.h"
 
 
 /*
@@ -55,10 +55,8 @@ DIRTBL_ENTRY dirtbl[NCURDIR];
 
 /*
  **     drvsel - mask of drives selected since power up
- **     drvrem - mask of drives with removable media
  */
 LONG    drvsel;
-LONG    drvrem;
 
 
 /*

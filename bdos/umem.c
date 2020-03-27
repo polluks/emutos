@@ -2,7 +2,7 @@
  * umem.c - user memory management interface routines
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2017 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * Authors:
  *  KTB   Karl T. Braun (kral)
@@ -13,20 +13,17 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
 /* #define ENABLE_KDEBUG */
 
-
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include "bdosdefs.h"
 #include "fs.h"
 #include "mem.h"
 #include "gemerror.h"
 #include "biosbind.h"
 #include "biosext.h"
 #include "xbiosbind.h"
-#include "kprint.h"
-#include "../bios/tosvars.h"
+#include "bdosstub.h"
 
 
 /*
@@ -98,13 +95,13 @@ static void dump_mem_map(void)
  */
 static MPB *find_mpb(void *addr)
 {
-    if (((UBYTE *)addr >= start_stram) && ((UBYTE *)addr < end_stram)) {
+    if (((UBYTE *)addr >= start_stram) && ((UBYTE *)addr < end_stram))
         return &pmd;
+
 #if CONF_WITH_ALT_RAM
-    } else if (has_alt_ram) {
+    if (has_alt_ram)
         return &pmdalt;
 #endif
-    }
 
     return NULL;
 }
@@ -194,10 +191,13 @@ long xsetblk(int n, void *blk, long len)
         return EIMBA;
 
     /*
-     * Round the size to a multiple of 4 bytes to keep alignment.
+     * Round the size up to a multiple of 2 or 4 bytes to keep alignment.
      * Alignment on long boundaries is faster in FastRAM.
      */
-    len = (len + 3) & ~3;
+    if (mpb == &pmd)
+        len = (len + 1) & ~1;
+    else
+        len = (len + 3) & ~3;
 
     KDEBUG(("BDOS Mshrink: new length=%ld\n",len));
 
@@ -347,7 +347,6 @@ ret:
  *  at this time, this implementation is provided for compatibility
  *  purposes only, since video memory is always preallocated.
  */
-extern UBYTE *v_bas_ad;
 void *srealloc(long amount)
 {
     ULONG maxmem = initial_vram_size();
@@ -362,6 +361,12 @@ void *srealloc(long amount)
 }
 
 #if CONF_WITH_ALT_RAM
+
+#if CONF_WITH_STATIC_ALT_RAM
+/* Static Alt-RAM is the area used by static data (BSS and maybe TEXT) */
+extern UBYTE _static_altram_start[];
+extern UBYTE _static_altram_end[];
+#endif /* CONF_WITH_STATIC_ALT_RAM */
 
 /*
  * Maddalt() informs GEMDOS of the existence of additional 'alternative'
@@ -400,9 +405,15 @@ long xmaddalt(UBYTE *start, LONG size)
      || (start < end_stram))
         return -1;
 
-    /* if the new block is just after a free one, just extend it */
+    /* try to merge blocks */
     for (p = pmdalt.mp_mfl; p; p = p->m_link) {
         if (p->m_start + p->m_length == start) {
+            /* new block is just after a free one, extend it at end */
+            p->m_length += size;
+            return 0;
+        } else if (start + size == p->m_start) {
+            /* new block is just before a free one, extend it at beginning */
+            p->m_start -= size;
             p->m_length += size;
             return 0;
         }

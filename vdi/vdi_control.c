@@ -3,26 +3,23 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc.
- * Copyright 2002-2018 The EmuTOS development team.
+ * Copyright 2002-2019 The EmuTOS development team.
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
-#include "../bios/lineavars.h"
+#include "emutos.h"
+#include "lineavars.h"
 #include "vdi_defs.h"
-/* #include "kprint.h" */
 #include "biosbind.h"
 #include "xbiosbind.h"
-#include "../bios/screen.h"
+#include "biosext.h"
 #include "asm.h"
 #include "string.h"
 #include "intmath.h"
-
-#define X_MALLOC 0x48
-#define X_MFREE 0x49
+#include "bdosbind.h"
+#include "tosvars.h"
 
 #define FIRST_VDI_HANDLE    1
 #define LAST_VDI_HANDLE     (FIRST_VDI_HANDLE+NUM_VDI_HANDLES-1)
@@ -73,7 +70,7 @@ static const WORD INQ_TAB_rom[45] = {
     1,                  /* 11 - text alignment flag      */
     0,                  /* 12 - Inking capability        */
     0,                  /* 13 - rubber banding           */
-    256,                /* 14 - maximum vertices (must agree with vdi_asm.s) */
+    MAX_VERTICES,       /* 14 - maximum vertices         */
     -1,                 /* 15 - maximum intin            */
     1,                  /* 16 - number of buttons on MOUSE   */
     0,                  /* 17 - styles for wide lines            */
@@ -259,7 +256,7 @@ static void init_wk(Vwk * vwk)
     vwk->fill_style = ((l > MAX_FILL_STYLE) || (l < MIN_FILL_STYLE)) ? DEF_FILL_STYLE : l;
 
     l = *pointer++;             /* INTIN[8] */
-    if (vwk->fill_style == PATTERN_FILL_STYLE)
+    if (vwk->fill_style == FIS_PATTERN)
         l = ((l > MAX_FILL_PATTERN) || (l < MIN_FILL_PATTERN)) ? DEF_FILL_PATTERN : l;
     else
         l = ((l > MAX_FILL_HATCH) || (l < MIN_FILL_HATCH)) ? DEF_FILL_HATCH : l;
@@ -272,7 +269,7 @@ static void init_wk(Vwk * vwk)
 
     st_fl_ptr(vwk);                /* set the fill pattern as requested */
 
-    vwk->wrt_mode = MD_REPLACE-1;  /* default is replace mode */
+    vwk->wrt_mode = WM_REPLACE;    /* default is replace mode */
     vwk->line_width = DEF_LWID;
     vwk->line_beg = SQUARED;       /* default to squared ends */
     vwk->line_end = SQUARED;
@@ -346,7 +343,7 @@ void vdi_v_opnvwk(Vwk * vwk)
     /*
      * Allocate the memory for a virtual workstation
      */
-    vwk = (Vwk *)trap1(X_MALLOC, sizeof(Vwk));
+    vwk = (Vwk *)Malloc(sizeof(Vwk));
     if (vwk == NULL) {
         CONTRL[6] = 0;  /* No memory available, exit */
         return;
@@ -384,7 +381,7 @@ void vdi_v_clsvwk(Vwk * vwk)
      */
     CUR_WORK = &phys_work;
 
-    trap1(X_MFREE, vwk);
+    Mfree(vwk);
 }
 
 
@@ -460,6 +457,9 @@ void vdi_v_opnwk(Vwk * vwk)
     timer_init();
     vdimouse_init();            /* initialize mouse */
     esc_init(vwk);              /* enter graphics mode */
+
+    /* Just like TOS 2.06, make the physical workstation the current workstation for LineA. */
+    CUR_WORK = vwk;
 }
 
 
@@ -473,7 +473,7 @@ void vdi_v_clswk(Vwk * vwk)
     /* close all open virtual workstations */
     for (handle = VDI_PHYS_HANDLE+1, p = vwk_ptr+handle; handle <= LAST_VDI_HANDLE; handle++, p++) {
         if (*p) {
-            trap1(X_MFREE, *p);
+            Mfree(*p);
             *p = NULL;
         }
     }
@@ -499,7 +499,7 @@ void vdi_v_clrwk(Vwk * vwk)
     size = (ULONG)v_lin_wr * V_REZ_VT;
 
     /* clear the screen */
-    memset(v_bas_ad, 0, size);
+    bzero(v_bas_ad, size);
 }
 
 
@@ -542,14 +542,4 @@ void vdi_vq_extnd(Vwk * vwk)
     dst = INTOUT;
     for (i = 0; i < 45; i++)
         *dst++ = *src++;
-}
-
-
-
-/*
- * vdi_v_nop - dummy
- */
-void vdi_v_nop(Vwk * vwk)
-{
-    /* will never be implemented */
 }

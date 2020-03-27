@@ -1,7 +1,7 @@
 /*
  * scsi.h - SCSI support
  *
- * Copyright (C) 2018 The EmuTOS development team
+ * Copyright (C) 2018-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -12,8 +12,6 @@
 
 #ifndef _SCSI_H
 #define _SCSI_H
-
-#include "portab.h"
 
 #if CONF_WITH_ACSI || CONF_WITH_SCSI
 

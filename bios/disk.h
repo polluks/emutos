@@ -1,7 +1,7 @@
 /*
  * disk.h - disk routines
  *
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -13,11 +13,8 @@
 #ifndef DISK_H
 #define DISK_H
 
-#include "portab.h"
-
 /* defines */
 
-#define SECTOR_SIZE     512 /* standard for floppy, hard disk */
 #define NUMFLOPPIES     2   /* max number of floppies supported */
 
 #define ACSI_BUS            0
@@ -25,7 +22,16 @@
 #define IDE_BUS             2
 #define SDMMC_BUS           3
 
-#define MAX_BUS             SDMMC_BUS
+#if CONF_WITH_SDMMC
+# define MAX_BUS            SDMMC_BUS
+#elif CONF_WITH_IDE
+# define MAX_BUS            IDE_BUS
+#elif CONF_WITH_SCSI
+# define MAX_BUS            SCSI_BUS
+#else
+# define MAX_BUS            ACSI_BUS
+#endif
+
 #define DEVICES_PER_BUS     8
 
 #define UNITSNUM            (NUMFLOPPIES+(DEVICES_PER_BUS*(MAX_BUS+1)))
@@ -67,14 +73,6 @@
 #define MEDIAMAYCHANGE  1L              /*  media may have changed      */
 #define MEDIACHANGE     2L              /*  media def has changed       */
 
-/*
- * flop_mediach() does checksums over the first few sectors in order to
- * detect floppy media change.  the following specifies the number of
- * sectors to use; the value is (1 + the maximum FAT size)
- */
-#define CHKSUM_SECTORS  6
-
-
 /* physical unit (floppy/harddisk) identifier */
 struct _unit
 {
@@ -107,8 +105,8 @@ LONG disk_rw(UWORD unit, UWORD rw, ULONG sector, UWORD count, UBYTE *buf);
 
 /* xbios functions */
 
-extern LONG DMAread(LONG sector, WORD count, UBYTE *buf, WORD major);
-extern LONG DMAwrite(LONG sector, WORD count, const UBYTE *buf, WORD major);
+LONG DMAread(LONG sector, WORD count, UBYTE *buf, WORD major);
+LONG DMAwrite(LONG sector, WORD count, const UBYTE *buf, WORD major);
 
 /* partition detection */
 

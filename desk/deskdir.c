@@ -5,7 +5,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -20,11 +20,9 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
-#include "dos.h"
 #include "gemdos.h"
 #include "optimize.h"
 
@@ -33,7 +31,6 @@
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
-#include "gembind.h"
 #include "aesbind.h"
 #include "desksupp.h"
 #include "deskfun.h"
@@ -43,12 +40,9 @@
 #include "deskdir.h"
 #include "deskins.h"
 #include "gemerror.h"
-#include "kprint.h"
 
 
 #define MAX_CLUS_SIZE   (32*1024L)  /* maximum cluster size */
-
-#define ALLFILES    (F_SUBDIR|F_SYSTEM|F_HIDDEN)
 
 #define OP_RENAME   777     /* used internally by dir_op(): must not be the same as any other OP_XXX ! */
 
@@ -96,10 +90,10 @@ void draw_dial(OBJECT *tree)
  */
 static WORD do_namecon(void)
 {
-    OBJECT *tree = G.a_trees[ADCPALER];
+    OBJECT *tree = desk_rs_trees[ADCPALER];
     WORD ob;
 
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
     if (ml_havebox)
         draw_dial(tree);
     else
@@ -108,8 +102,8 @@ static WORD do_namecon(void)
         ml_havebox = TRUE;
     }
     form_do(tree, 0);
-    draw_dial(G.a_trees[ADCPYDEL]);
-    graf_mouse(HGLASS, NULL);
+    draw_dial(desk_rs_trees[ADCPYDEL]);
+    desk_busy_on();
 
     ob = inf_gindex(tree, CAOK, 3) + CAOK;
     (tree+ob)->ob_state = NORMAL;
@@ -219,22 +213,6 @@ void del_fname(char *pstr)
 }
 
 
-/*
- *  Parse to find the filename part of a path and return a copy of it
- *  in a form ready to be placed in a dialog box.
- *
- *  input:  pstr, the full pathname
- *  output: newstr, the formatted filename
- */
-static void get_fname(char *pstr, char *newstr)
-{
-    char ml_ftmp[LEN_ZFNAME];
-
-    strcpy(ml_ftmp, filename_start(pstr));
-    fmt_str(ml_ftmp, newstr);
-}
-
-
 WORD illegal_op_msg(void)
 {
     fun_alert(1, STILLOP);
@@ -247,7 +225,7 @@ WORD illegal_op_msg(void)
  *
  *  if the delete fails, issues an alert for skip/retry/abort
  *
- *  Returns 
+ *  Returns
  *      1   delete succeeded
  *      0   delete failed, user wants to stop
  *      -1  delete failed, user wants to continue
@@ -259,7 +237,7 @@ static WORD d_dofdel(char *ppath)
         if (dos_delete(ppath) == 0)
             break;
 
-        switch(fun_alert_string(1, STDELFIL, filename_start(ppath)))
+        switch(fun_alert_merge(1, STDELFIL, filename_start(ppath)))
         {
         case 1:     /* skip */
             return -1;
@@ -279,7 +257,7 @@ static WORD d_dofdel(char *ppath)
  *
  *  if the delete fails, issues an alert for skip/retry/abort
  *
- *  Returns 
+ *  Returns
  *      1   delete succeeded
  *      0   delete failed, user wants to stop
  *      -1  delete failed, user wants to continue
@@ -291,7 +269,7 @@ static WORD d_dofoldel(char *ppath)
         if (dos_rmdir(ppath) == 0)
             break;
 
-        switch(fun_alert_string(1, STDELDIR, filename_start(ppath)))
+        switch(fun_alert_merge(1, STDELDIR, filename_start(ppath)))
         {
         case 1:     /* skip */
             return -1;
@@ -317,7 +295,7 @@ static WORD d_dofoldel(char *ppath)
 static WORD output_fname(char *psrc_file, char *pdst_file)
 {
     WORD ob = 0, samefile;
-    OBJECT *tree = G.a_trees[ADCPALER];
+    OBJECT *tree = desk_rs_trees[ADCPALER];
     char ml_fsrc[LEN_ZFNAME], ml_fdst[LEN_ZFNAME], ml_fstr[LEN_ZFNAME];
     char old_dst[LEN_ZFNAME];
 
@@ -351,8 +329,8 @@ static WORD output_fname(char *psrc_file, char *pdst_file)
          * the user wants to be notified about overwrites, so we need
          * to tell the user: get i/p & o/p filenames and prefill dialog
          */
-        get_fname(psrc_file, ml_fsrc);  /* get input filename */
-        get_fname(pdst_file, ml_fdst);  /* get output filename */
+        fmt_str(filename_start(psrc_file), ml_fsrc);    /* get input filename */
+        fmt_str(filename_start(pdst_file), ml_fdst);    /* get output filename */
         inf_sset(tree, CACURRNA, ml_fsrc);
         inf_sset(tree, CACOPYNA, ml_fdst);
 
@@ -420,7 +398,7 @@ static WORD d_dofcopy(char *psrc_file, char *pdst_file, WORD time, WORD date, WO
         error = dos_open(psrc_file, 0);
         if (error >= 0)
             break;
-        switch(fun_alert_string(1, STOPFAIL, filename_start(psrc_file)))
+        switch(fun_alert_merge(1, STOPFAIL, filename_start(psrc_file)))
         {
         case 1:     /* skip */
             return -1;
@@ -449,7 +427,7 @@ static WORD d_dofcopy(char *psrc_file, char *pdst_file, WORD time, WORD date, WO
         error = dos_create(pdst_file, attr);
         if (error >= 0)
             break;
-        switch(fun_alert_string(1, STCRTFIL, filename_start(pdst_file)))
+        switch(fun_alert_merge(1, STCRTFIL, filename_start(pdst_file)))
         {
         case 1:     /* skip */
             dos_close(srcfh);
@@ -505,7 +483,7 @@ static WORD d_dofcopy(char *psrc_file, char *pdst_file, WORD time, WORD date, WO
             file = pdst_file;
         }
         /* Skip or Abort ? */
-        rc = (fun_alert_string(1, alert, filename_start(file))==1) ? -1 : 0;
+        rc = (fun_alert_merge(1, alert, filename_start(file))==1) ? -1 : 0;
     }
 
     dos_close(srcfh);       /* close files */
@@ -546,13 +524,21 @@ static void update_modified_windows(char *path,WORD length)
 WORD d_doop(WORD level, WORD op, char *psrc_path, char *pdst_path, OBJECT *tree, DIRCOUNT *count)
 {
     char *ptmp, *ptmpdst;
-    DTA  *dta;
-    WORD more, ret;
+    DTA  *dta, *prevdta;
+    WORD more, ret = 0;
 
     /*
-     * ensure we don't go past the end of the g_dtastk[] array
+     * ensure we don't exceed allowed depth
      */
     if (level > MAX_LEVEL)
+        ret = -1;
+    else
+    {
+        dta = dos_alloc_anyram(sizeof(DTA));
+        if (!dta)
+            ret = -1;
+    }
+    if (ret < 0)
     {
         fun_alert(1, STFO8DEE);
         return FALSE;
@@ -561,7 +547,8 @@ WORD d_doop(WORD level, WORD op, char *psrc_path, char *pdst_path, OBJECT *tree,
     if (level == 0)
         deleted_folders = 0L;
 
-    dta = &G.g_dtastk[level];
+    /* save old DTA, use new DTA for this level */
+    prevdta = dos_gdta();
     dos_sdta(dta);
 
     for (ret = dos_sfirst(psrc_path, ALLFILES); ; ret = dos_snext())
@@ -601,26 +588,31 @@ WORD d_doop(WORD level, WORD op, char *psrc_path, char *pdst_path, OBJECT *tree,
                 inf_numset(tree, CDFOLDS, --(count->dirs));
                 draw_fld(tree, CDFOLDS);
             }
-            return more;
+            break;      /* exit main loop */
         }
 
         /*
          * return if real error
          */
         if (ret < 0)
-            return FALSE;
+        {
+            more = FALSE;
+            break;      /* exit main loop */
+        }
 
         if (op != OP_COUNT)
+        {
             if (user_abort())
             {
                 more = FALSE;
-                break;
+                break;  /* exit main loop */
             }
+        }
 
         /*
          * handle folder
          */
-        if (dta->d_attrib & F_SUBDIR)
+        if (dta->d_attrib & FA_SUBDIR)
         {
             if (dta->d_fname[0] != '.')
             {
@@ -638,14 +630,13 @@ WORD d_doop(WORD level, WORD op, char *psrc_path, char *pdst_path, OBJECT *tree,
                 if (more)
                 {
                     more = d_doop(level+1,op,psrc_path,pdst_path,tree,count);
-                    dos_sdta(dta);      /* must restore DTA address! */
                 }
                 sub_path(psrc_path);    /* restore the old paths */
                 if ((op == OP_COPY) || (op == OP_MOVE))
                     sub_path(pdst_path);
             }
             if (!more)
-                break;
+                break;  /* exit main loop */
             continue;
         }
 
@@ -682,8 +673,12 @@ WORD d_doop(WORD level, WORD op, char *psrc_path, char *pdst_path, OBJECT *tree,
             draw_fld(tree, CDFILES);
         }
         if (!more)
-            break;
+            break;      /* exit main loop */
     }
+
+    /* restore old DTA, free current DTA */
+    dos_sdta(prevdta);
+    dos_free(dta);
 
     return more;
 }
@@ -701,10 +696,10 @@ WORD d_doop(WORD level, WORD op, char *psrc_path, char *pdst_path, OBJECT *tree,
 static WORD get_new_name(char *dstpth)
 {
     char ml_fsrc[LEN_ZFNAME], ml_fdst[LEN_ZFNAME], str[LEN_ZFNAME];
-    OBJECT *tree = G.a_trees[ADCPALER];
+    OBJECT *tree = desk_rs_trees[ADCPALER];
     WORD ob;
 
-    get_fname(dstpth, ml_fsrc);         /* extract current folder name */
+    fmt_str(filename_start(dstpth), ml_fsrc);   /* extract current folder name */
     strcpy(ml_fdst,ml_fsrc);            /* pre-fill new folder name */
     inf_sset(tree, CACURRNA, ml_fsrc);  /* and put both in dialog */
     inf_sset(tree, CACOPYNA, ml_fdst);
@@ -864,7 +859,7 @@ WORD dir_op(WORD op, WORD icontype, PNODE *pspath, char *pdst_path, DIRCOUNT *co
     LONG lavail;
     char srcpth[MAXPATHLEN], dstpth[MAXPATHLEN];
 
-    graf_mouse(HGLASS, NULL);
+    desk_busy_on();
 
     ml_havebox = FALSE;
     confirm = 0;
@@ -878,7 +873,7 @@ WORD dir_op(WORD op, WORD icontype, PNODE *pspath, char *pdst_path, DIRCOUNT *co
     tree = NULL;
     if (op != OP_COUNT)
     {
-        tree = G.a_trees[ADCPYDEL];
+        tree = desk_rs_trees[ADCPYDEL];
         obj = tree + CDTITLE;
     }
 
@@ -891,14 +886,14 @@ WORD dir_op(WORD op, WORD icontype, PNODE *pspath, char *pdst_path, DIRCOUNT *co
         break;
     case OP_DELETE:
         confirm = G.g_cdelepref;
-        obj->ob_spec = (LONG) ini_str(STDELETE);
+        obj->ob_spec = (LONG) desktop_str_addr(STDELETE);
         break;
     case OP_COPY:
     case OP_MOVE:
         lavail = dos_avail_stram() - 0x400; /* allow safety margin */
         if (lavail < 0L)
         {
-            graf_mouse(ARROW, NULL);
+            desk_busy_off();
             malloc_fail_alert();        /* let user know */
             return FALSE;
         }
@@ -921,14 +916,14 @@ WORD dir_op(WORD op, WORD icontype, PNODE *pspath, char *pdst_path, DIRCOUNT *co
 #else
         copybuf = dos_alloc_anyram(copylen);
 #endif
-        /* drop thru */
+        FALLTHROUGH;
     case OP_RENAME:
         confirm = G.g_ccopypref;
-        obj->ob_spec = (LONG) ini_str(STCOPY);
+        obj->ob_spec = (LONG) desktop_str_addr(STCOPY);
         if (op != OP_COPY)      /* i.e. OP_MOVE or OP_RENAME */
         {
             confirm |= G.g_cdelepref;
-            obj->ob_spec = (LONG) ini_str(STMOVE);
+            obj->ob_spec = (LONG) desktop_str_addr(STMOVE);
         }
         break;
     }
@@ -944,9 +939,9 @@ WORD dir_op(WORD op, WORD icontype, PNODE *pspath, char *pdst_path, DIRCOUNT *co
         ml_havebox = TRUE;
         if (confirm)
         {
-            graf_mouse(ARROW, NULL);
+            desk_busy_off();
             form_do(tree, 0);
-            graf_mouse(HGLASS, NULL);
+            desk_busy_on();
             more = inf_what(tree, CDOK, CDCNCL);
         }
     }
@@ -957,9 +952,9 @@ WORD dir_op(WORD op, WORD icontype, PNODE *pspath, char *pdst_path, DIRCOUNT *co
      */
     if (more && (op == OP_DELETE) && (icontype == AT_ISDISK))
     {
-        graf_mouse(ARROW, NULL);
+        desk_busy_off();
         more = (fun_alert_merge(2, STDELDIS, psrc_path[0]) == 1) ? TRUE: FALSE;
-        graf_mouse(HGLASS, NULL);
+        desk_busy_on();
     }
 
     for (pf = pspath->p_flist; pf && more; pf = pf->f_next)
@@ -977,7 +972,7 @@ WORD dir_op(WORD op, WORD icontype, PNODE *pspath, char *pdst_path, DIRCOUNT *co
         /*
          * handle folder
          */
-        if (pf->f_attr & F_SUBDIR)
+        if (pf->f_attr & FA_SUBDIR)
         {
             add_path(srcpth, pf->f_name);
             if ((op == OP_COPY) || (op == OP_MOVE) || (op == OP_RENAME))
@@ -1061,7 +1056,7 @@ WORD dir_op(WORD op, WORD icontype, PNODE *pspath, char *pdst_path, DIRCOUNT *co
 
     if (tree)
         end_dialog(tree);
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
 
     return more;
 }

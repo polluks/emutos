@@ -2,7 +2,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -20,18 +20,16 @@
 
         .globl  _ui_start
         .globl  _accdesk_start
-        .globl  _gemdos
         .globl  _dos_exec
 
         .extern _ad_stail
         .extern _ad_envrn
         .extern _size_theglo
         .extern _D
-        .extern _bzero
-        .extern _justretf
+        .extern _bzero_nobuiltin
+        .extern _just_rts
         .extern _drwaddr
         .extern _tikcod
-        .extern _tikaddr
         .extern _init_p0_stkptr
         .extern _gem_main
         .extern _gl_changerez
@@ -104,16 +102,12 @@ aes_restart:
         move.l  d0,-(sp)        // size in bytes
         movea.l #_D,a0
         move.l  a0,-(sp)        // address
-        jsr     _bzero          // clear it
+        jsr     _bzero_nobuiltin    // clear it
         addq.l  #8,sp
 
         // _drwaddr ??? set to just_rts
-        lea     _justretf,a0
+        lea     _just_rts,a0
         move.l  a0,_drwaddr
-
-        // _tikaddr ??? set to tikcod
-        lea     _tikcod,a0
-        move.l  a0,_tikaddr
 
         // call C routine to init the SSP in the UDA & return its offset
         jsr     _init_p0_stkptr
@@ -138,7 +132,6 @@ aes_restart:
         // Pterm0()
         clr.w   -(sp)
         trap    #1
-
 
 //////////////////////////////////////////////////////////////////////////////
 // Run accessories and desktop
@@ -168,30 +161,6 @@ _accdesk_start:
 
         clr.w   -(sp)                   // Pterm0()
         trap    #1
-
-
-//////////////////////////////////////////////////////////////////////////////
-// Execute a GEMDOS call (see gemdos.c).
-//////////////////////////////////////////////////////////////////////////////
-_gemdos:
-        move.l  (SP)+,saveretaddr
-#ifdef __mcoldfire__
-        move.l  d2,saveregs
-        move.l  a2,saveregs+4
-#else
-        movem.l d2/a2,saveregs
-#endif
-
-        trap    #1
-#ifdef __mcoldfire__
-        move.l  saveregs,d2
-        move.l  saveregs+4,a2
-#else
-        movem.l saveregs,d2/a2
-#endif
-        move.l  saveretaddr,-(SP)
-        rts
-
 
 //////////////////////////////////////////////////////////////////////////////
 // A wrapper around Pexec. We can't use the above function _gemdos for this
@@ -271,23 +240,12 @@ _dos_exec:
 
 .bss
 
-
 old_gem_ssp:
         .ds.l   1
-
-
-
-saveretaddr:
-        .ds.l   1
-
 
 // Space for the user stack:
         .ds.b   256
 gemusp:
-
-
-saveregs:
-        .ds.l   2
 
 // pointer to original environment, restored on AES restart
 save_ad_envrn:

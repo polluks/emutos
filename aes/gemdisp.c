@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,13 +19,11 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-
-#include "portab.h"
+#include "emutos.h"
 #include "gemdisp.h"
 #include "string.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesvars.h"
 #include "obdefs.h"
 
 #include "geminput.h"
@@ -37,7 +35,6 @@
 #include "gemasm.h"
 #include "optimize.h"
 #include "gemdosif.h"
-#include "kprint.h"
 
 #include "asm.h"
 
@@ -156,12 +153,12 @@ void chkkbd(void)
         return;
 
     kstat = gsx_kstate();
-    achar = gsx_char();
-    if (achar && (gl_mowner->p_cda->c_q.c_cnt >= KBD_SIZE))
-    {
-        achar = 0x0;                        /* buffer overrun       */
-        sound(TRUE, 880, 2);
-    }
+    achar = 0;
+
+    /* only get a key if there's room in the buffer */
+    if (gl_mowner->p_cda->c_q.c_cnt < KBD_SIZE)
+        achar = gsx_char();     /* returns 0 if no key available */
+
     if (achar || (kstat != kstate))
     {
         disable_interrupts();
@@ -209,7 +206,7 @@ static void schedule(void)
 /*                                                                      */
 /************************************************************************/
 
-extern void disp(void); /* called only from aes/gemasm.S */
+void disp(void); /* called only from aes/gemasm.S */
 
 void disp(void)
 {

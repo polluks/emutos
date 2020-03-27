@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -18,10 +18,10 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
 #include "obdefs.h"
+#include "aesext.h"
 #include "gemlib.h"
 #include "funcdef.h"
 
@@ -34,10 +34,9 @@
 #include "gemoblib.h"
 
 #include "string.h"
-#include "kprint.h"
 
                                                 /* in GSXBIND.C         */
-#define g_vsf_color( x )          gsx_1code(S_FILL_COLOR, x)
+#define g_vsf_color( x )          gsx_1code(SET_FILL_COLOR, x)
 
 
 /*
@@ -262,7 +261,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
         case G_BOXCHAR:
         case G_IBOX:
             gr_crack((UWORD)spec, &bcol, &tcol, &ipat, &icol, &tmode);
-            /* drop thru */
+            FALLTHROUGH;
         case G_BUTTON:
             if (obtype == G_BUTTON)
             {
@@ -270,7 +269,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
                 ipat = IP_HOLLOW;
                 icol = WHITE;
             }
-            /* drop thru */
+            FALLTHROUGH;
         case G_BOXTEXT:
         case G_FBOXTEXT:
             /* draw box's border */
@@ -301,7 +300,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
             strcpy(D.g_rawstr, edblk.te_ptext);
             strcpy(D.g_tmpstr, edblk.te_ptmplt);
             ob_format(edblk.te_just, D.g_rawstr, D.g_tmpstr, D.g_fmtstr);
-            /* drop thru to gr_gtext */
+            FALLTHROUGH; /* to gr_gtext */
         case G_BOXCHAR:
             edblk.te_ptext = D.g_fmtstr;
             if (obtype == G_BOXCHAR)
@@ -311,7 +310,7 @@ static void just_draw(OBJECT *tree, WORD obj, WORD sx, WORD sy)
                 edblk.te_just = TE_CNTR;
                 edblk.te_font = IBM;
             }
-            /* drop thru to gr_gtext */
+            FALLTHROUGH; /* to gr_gtext */
         case G_TEXT:
         case G_BOXTEXT:
             gr_inside(&t, tmpth);

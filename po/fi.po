@@ -26,7 +26,7 @@ msgstr "GEMDOS-asemat"
 msgid "MB"
 msgstr "MB"
 
-#: bios/initinfo.c
+#: bios/initinfo.c desk/deskinf.c
 msgid "KB"
 msgstr "KB"
 
@@ -326,6 +326,10 @@ msgid "Copy's name: ________.___"
 msgstr "Kopion nimi: ________.___"
 
 #: desk/desk_rsc.c
+msgid "Free memory: ___________________"
+msgstr "Vapaa muisti: ___________________"
+
+#: desk/desk_rsc.c
 msgid "Label: ________.___"
 msgstr "Nimi: ________.___"
 
@@ -350,44 +354,44 @@ msgid "  Desktop info..."
 msgstr "  Ohjelmasta..."
 
 #: desk/desk_rsc.c
-msgid "  Open            ^O"
-msgstr "  Avaa                ^O"
+msgid "  Open"
+msgstr "  Avaa"
 
 #: desk/desk_rsc.c
-msgid "  Info/Rename...  ^I"
-msgstr "  Näytä tiedot...     ^I"
+msgid "  Info/Rename..."
+msgstr "  Näytä tiedot..."
 
 #: desk/desk_rsc.c
-msgid "  New Folder...   ^N"
-msgstr "  Uusi kansio...      ^N"
+msgid "  New folder..."
+msgstr "  Uusi kansio..."
 
 #: desk/desk_rsc.c
-msgid "  Close           ^U"
-msgstr "  Sulje               ^U"
+msgid "  Close"
+msgstr "  Sulje"
 
 #: desk/desk_rsc.c
-msgid "  Close window    ^W"
-msgstr "  Sulje ikkuna        ^W"
+msgid "  Close window"
+msgstr "  Sulje ikkuna"
 
 #: desk/desk_rsc.c
 msgid "  Set file mask..."
 msgstr "  Aseta tiedostomaski..."
 
 #: desk/desk_rsc.c
-msgid "  Delete...       ^D"
-msgstr "  Poista...           ^D"
+msgid "  Delete..."
+msgstr "  Poista..."
 
 #: desk/desk_rsc.c
 msgid "  Format..."
 msgstr "  Alusta..."
 
 #: desk/desk_rsc.c
-msgid "  Execute EmuCON  ^Z"
-msgstr "  Käynnistä EmuCON    ^Z"
+msgid "  Execute EmuCON"
+msgstr "  Käynnistä EmuCON"
 
 #: desk/desk_rsc.c
-msgid "  Shutdown        ^Q"
-msgstr "  Pysäytä systeemi    ^Q"
+msgid "  Shutdown"
+msgstr "  Pysäytä systeemi"
 
 #: desk/desk_rsc.c
 msgid "  Show as icons"
@@ -446,20 +450,20 @@ msgid "  Desktop configuration..."
 msgstr "  Työpöytäasetukset..."
 
 #: desk/desk_rsc.c
-msgid "  Change resolution...  ^R"
-msgstr "  Vaihda tarkkuutta... ^R"
+msgid "  Change resolution..."
+msgstr "  Vaihda tarkkuutta..."
 
 #: desk/desk_rsc.c
-msgid "  Save desktop...       ^S"
-msgstr "  Tallenna työpöytä... ^S"
+msgid "  Read .INF file..."
+msgstr "  Lue .INF tiedosto..."
+
+#: desk/desk_rsc.c
+msgid "  Save desktop..."
+msgstr "  Tallenna työpöytä..."
 
 #: desk/desk_rsc.c
 msgid "  Blitter"
 msgstr "  Blitteri"
-
-#: desk/desk_rsc.c
-msgid "Attribute:"
-msgstr "Ominaisuus:"
 
 #: desk/desk_rsc.c
 msgid "Read/Write"
@@ -598,6 +602,10 @@ msgid "NEW FOLDER"
 msgstr "UUSI KANSIO"
 
 #: desk/desk_rsc.c
+msgid "PRINT FILE"
+msgstr "TULOSTA TIEDOSTO"
+
+#: desk/desk_rsc.c
 msgid "SET PREFERENCES"
 msgstr "MÄÄRITÄ ASETUKSET"
 
@@ -688,6 +696,10 @@ msgstr "Oletushakemisto:"
 #: desk/desk_rsc.c
 msgid "Input parameter:"
 msgstr "Syöte:"
+
+#: desk/desk_rsc.c
+msgid "Function keys:"
+msgstr "Funktionäppäimet:"
 
 #: desk/desk_rsc.c
 msgid "SET SCREEN RESOLUTION"
@@ -818,6 +830,10 @@ msgid "TRASH"
 msgstr "ROSKIS"
 
 #: desk/desk_rsc.c
+msgid "PRINTER"
+msgstr "TULOSTIN"
+
+#: desk/desk_rsc.c
 msgid "-More-"
 msgstr "-Lisää-"
 
@@ -834,6 +850,10 @@ msgid "Locate item"
 msgstr "Etsi kohde"
 
 #: desk/desk_rsc.c
+msgid "Select .INF file"
+msgstr "Valitse .INF tiedosto"
+
+#: desk/desk_rsc.c
 msgid "[2]["
 "Switch resolution?][ Yes | No ]"
 msgstr "[2]["
@@ -841,9 +861,15 @@ msgstr "[2]["
 
 #: desk/desk_rsc.c
 msgid "[2]["
-"Show this document?][Show|Cancel]"
+"Show or print this document?][Show|Print|Cancel]"
 msgstr "[2]["
-"Näytä tämä tiedosto?][ Näytä | Kumoa ]"
+"Näytä tai tulosta tiedosto?][Näytä|Tulosta|Kumoa]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Print error!][ Retry | Cancel ]"
+msgstr "[1]["
+"Tulostusvirhe!][Uudestaan| Kumoa ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -953,6 +979,14 @@ msgstr "[1]["
 
 #: desk/desk_rsc.c
 msgid "[1]["
+"%s|"
+"is a printer.][  OK  ]"
+msgstr "[1]["
+"%s|"
+"on tulostin.][  OK  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
 "You cannot drag applications,|"
 "files or folders onto the|"
 "Desktop.][  OK  ]"
@@ -1043,13 +1077,13 @@ msgstr "[1]["
 msgid "[1]["
 "Drive %s: does not exist.][ Cancel ]"
 msgstr "[1]["
-"Asemaa %s: ei ole.][ Cancel ]"
+"Asemaa %s: ei ole.][ Kumoa ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
 "No drive identifier.][ Retry ]"
 msgstr "[1]["
-"Aseman tunniste puuttuu.][ Uudestaan ]"
+"Aseman tunniste puuttuu.][Uudestaan]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1057,7 +1091,7 @@ msgid "[1]["
 "%s][ Skip | Retry | Abort ]"
 msgstr "[1]["
 "Tiedoston poisto epäonnistui|"
-"%s][ Ohita | Uudestaan | Keskeytä ]"
+"%s][ Ohita |Uudestaan| Keskeytä ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1065,7 +1099,7 @@ msgid "[1]["
 "%s][ Skip | Retry | Abort ]"
 msgstr "[1]["
 "Hakemiston poisto epäonnistui|"
-"%s][ Ohita | Uudestaan | Keskeytä ]"
+"%s][ Ohita |Uudestaan| Keskeytä ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1085,7 +1119,7 @@ msgid "[1]["
 "%s][ Skip | Retry | Abort ]"
 msgstr "[1]["
 "Tiedoston aukaisu epäonnistui|"
-"%s][ Ohita | Uudestaan | Keskeytä ]"
+"%s][ Ohita |Uudestaan| Keskeytä ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1093,7 +1127,7 @@ msgid "[1]["
 "%s][ Skip | Retry | Abort ]"
 msgstr "[1]["
 "Tiedoston luonti epäonnistui|"
-"%s][ Ohita | Uudestaan | Keskeytä ]"
+"%s][ Ohita |Uudestaan| Keskeytä ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1115,7 +1149,7 @@ msgstr "[1]["
 msgid "[1]["
 "Rename error!][ Retry | Cancel ]"
 msgstr "[1]["
-"Virhe uudelleennimeämisessä!][ Uudestaan | Kumoa ]"
+"Virhe uudelleennimeämisessä!][Uudestaan| Kumoa ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1124,6 +1158,12 @@ msgid "[1]["
 msgstr "[1]["
 "Oletushakemiston|"
 "asetus epäonnistui.][  OK  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Illegal .INF file format.][  OK  ]"
+msgstr "[1]["
+"Sopimaton .INF tiedostomuoto.][  OK  ]"
 
 #: cli/cmdint.c
 msgid "Copy <filespec> ... to standard output"
@@ -1278,8 +1318,8 @@ msgid "left/right arrow = previous/next character"
 msgstr "left/right arrow = previous/next character"
 
 #: cli/cmdint.c
-msgid "shift-left/right arrow = previous/next word"
-msgstr "shift-left/right arrow = previous/next word"
+msgid "control-left/right arrow = previous/next word"
+msgstr "control-left/right arrow = previous/next word"
 
 #: cli/cmdint.c
 msgid "invalid mode argument"

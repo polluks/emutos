@@ -2,19 +2,17 @@
  * bezier.c - Fast Bézier approximation using four control points.
  *
  * Copyright 1998-2002, Trevor Blight
- * Copyright 2004-2018 The EmuTOS development team
+ * Copyright 2004-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "vdi_defs.h"
 #include "biosbind.h"
 #include "asm.h"        /* for malloc */
-/* #include "kprint.h" */
-
+#include "aesext.h"
 
 #if HAVE_BEZIER
 
@@ -234,7 +232,7 @@ v_bez(Vwk * vwk, Point * ptsget, int nr_ptsin)
     WORD total_vertices = nr_ptsin;
     WORD total_jumps = 0;
     UWORD vertices_per_bez;
-    Point ptsbuf[MAX_PTSIN];
+    Point ptsbuf[MAX_VERTICES];
     /* Point * ptsget = (Point*)PTSIN; */
     Point * ptsput = ptsbuf;
 
@@ -337,7 +335,7 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
     WORD total_jumps = 0;
     UWORD vertices_per_bez;
     WORD output_vertices = 0;
-    Point ptsbuf[MAX_PTSIN];
+    Point ptsbuf[MAX_VERTICES];
     /* Point * ptsget = (Point*)PTSIN; */
     Point * ptsput = ptsbuf;
 
@@ -443,7 +441,7 @@ v_bez_fill(Vwk * vwk, Point * ptsget, int nr_ptsin)
     WORD vertices_per_bez;
     WORD i, i0;
     WORD output_vertices = 0;
-    Point ptsbuf[MAX_PTSIN];
+    Point ptsbuf[MAX_VERTICES];
     /* Point * ptsget = (Point*)PTSIN; */
     Point * ptsget0 = ptsget;
     Point * ptsput = ptsbuf;

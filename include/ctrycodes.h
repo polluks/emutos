@@ -1,7 +1,7 @@
 /*
  * ctrycodes.h - a mere list of country codes
  *
- * Copyright (C) 2003-2017 The EmuTOS development team
+ * Copyright (C) 2003-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -9,6 +9,9 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
+
+#ifndef CTRYCODES_H
+#define CTRYCODES_H
 
 /*
  * The country codes were defined by Atari. They do not need to be contiguous.
@@ -38,7 +41,7 @@
 /*
  * The following country codes were not defined by Atari.
  * Before defining new ones, be sure to register them in tos.hyp:
- * http://toshyp.atari.org/en/003007.html#Cookie_2C_20_AKP
+ * https://freemint.github.io/tos.hyp/en/bios_cookiejar.html#Cookie_2C_20_AKP
  * Note that those codes are also used in FreeMiNT/XaAES and must match:
  * https://github.com/freemint/freemint/blob/master/sys/keyboard.c#L93
  * https://github.com/freemint/freemint/blob/master/xaaes/src.km/init.c#L164
@@ -52,3 +55,5 @@
  * will be inferred from the COUNTRY Makefile variable.
  */
 #define OS_CONF_MULTILANG 0xff
+
+#endif /* CTRYCODES_H */

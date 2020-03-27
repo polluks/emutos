@@ -1,7 +1,7 @@
 /*
  * panicasm.S - support routines for panic debug messages
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -11,7 +11,6 @@
  */
 
 #include "asmdefs.h"
-
 
         .text
 
@@ -34,7 +33,6 @@
         .globl  _warm_reset
         .globl  _cold_reset
 
-
 /*
  * void panic(const char *fmt, ...);
  * save the registers, state and stack in 0x380, then
@@ -42,7 +40,6 @@
  * note: the stack dump will contain the attributes.
  * the exception number proc_enum will be zero.
  */
-
 _panic:
         // supervisor mode, no interrupts
         move.w  #0x2700,sr
@@ -100,7 +97,7 @@ _kill_program:
         move.w  #-1,-(sp)               // error code for program killed by OS
         move.w  #0x4C,-(sp)             // Pterm
         trap    #1
-        // drop thru into warm reset
+        // fall through _warm_reset (should not happen!)
 
 /* void warm_reset(void)
  * Restart this OS

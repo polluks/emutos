@@ -1,7 +1,7 @@
 /*
  * floppy.c - floppy routines
  *
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -12,8 +12,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "gemerror.h"
 #include "floppy.h"
 #include "disk.h"
@@ -24,12 +23,12 @@
 #include "asm.h"
 #include "tosvars.h"
 #include "machine.h"
+#include "has.h"
 #include "blkdev.h"
 #include "string.h"
-#include "kprint.h"
 #include "xbiosbind.h"  /* Random() */
 #include "delay.h"
-#include "processor.h"
+#include "biosext.h"    /* for cache control routines */
 #include "cookie.h"
 #include "intmath.h"
 #ifdef MACHINE_AMIGA
@@ -719,8 +718,8 @@ void protobt(UBYTE *buf, LONG serial, WORD type, WORD exec)
 
 static void setiword(UBYTE *addr, UWORD value)
 {
-    addr[0] = value;
-    addr[1] = value >> 8;
+    addr[0] = LOBYTE(value);
+    addr[1] = HIBYTE(value);
 }
 
 /*==== xbios floprd, flopwr ===============================================*/
@@ -909,13 +908,14 @@ LONG flopfmt(UBYTE *buf, WORD *skew, WORD dev, WORD spt,
             leader = LEADER_HD;
             break;
         }
-        /* else drop thru */
+        FALLTHROUGH;
     case DD_DRIVE:
         if ((spt >= 1) && (spt <= 10)) {
             track_size = TRACK_SIZE_DD;
             leader = LEADER_DD;
             break;
         }
+        FALLTHROUGH;
     default:
         return EBADSF;          /* consistent, at least :-) */
     }
@@ -1116,7 +1116,7 @@ static WORD flopio(UBYTE *userbuf, WORD rw, WORD dev,
      * we can do it just once for efficiency.
      */
     if (rw && !tmpbuf)
-        flush_data_cache(userbuf, (LONG)count * SECTOR_SIZE);
+        flush_data_cache(userbuf, count * SECTOR_SIZE);
 
     while(count--) {
         iobufptr = tmpbuf ? tmpbuf : userbuf;

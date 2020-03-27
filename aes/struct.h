@@ -2,7 +2,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -17,7 +17,6 @@
 
 #ifndef GEMSTRUCT_H
 #define GEMSTRUCT_H
-#include "config.h"                     /* for AES_STACK_SIZE */
 
 typedef struct aespd   AESPD;           /* process descriptor           */
 typedef struct uda     UDA;             /* user stack data area         */
@@ -158,16 +157,5 @@ struct fpd                  /* fork process descriptor */
         FCODE   f_code;
         LONG    f_data;
 } ;
-
-/* GEM memory usage parameter block */
-
-#define GEM_MUPB_MAGIC 0x87654321
-
-typedef struct
-{
-    ULONG gm_magic;         /* Magical value, has to be GEM_MUPB_MAGIC */
-    void  *gm_end;          /* End of the memory required by GEM */
-    void  (*gm_init)(void); /* Start address of GEM */
-} GEM_MUPB;
 
 #endif /* GEMSTRUCT_H */

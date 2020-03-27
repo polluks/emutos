@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -18,8 +18,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
 #include "gsxdefs.h"
@@ -32,8 +31,6 @@
 #include "deskwin.h"
 #include "aesbind.h"
 #include "deskobj.h"
-#include "gembind.h"
-#include "kprint.h"
 
 
 static const OBJECT gl_sampob[2] =

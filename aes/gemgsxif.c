@@ -1,7 +1,7 @@
 /*
  * gemgsxif.c - AES's interface to VDI (gsx)
  *
- * Copyright 2002-2018 The EmuTOS development team
+ * Copyright 2002-2019 The EmuTOS development team
  *           1999, Caldera Thin Clients, Inc.
  *           1987, Digital Research Inc.
  *
@@ -14,10 +14,10 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
+#include "aesext.h"
 #include "funcdef.h"
 
 #include "gemdos.h"
@@ -27,7 +27,11 @@
 #include "geminit.h"
 #include "gemctrl.h"
 #include "gemgsxif.h"
-#include "kprint.h"
+#include "xbiosbind.h"
+#include "has.h"        /* for blitter-related items */
+#include "biosdefs.h"   /* for FALCON_REZ */
+#include "biosext.h"
+#include "asm.h"
 
 /*
  * Calls used in Crystal:
@@ -147,13 +151,20 @@ void gsx_mret(LONG *pmaddr, LONG *pmlen)
 
 
 
-void gsx_ncode(WORD code, WORD n, WORD m)
+static void gsx_ncode(WORD code, WORD n, WORD m)
 {
     contrl[0] = code;
     contrl[1] = n;
     contrl[3] = m;
     contrl[6] = gl_handle;
     gsx2();
+}
+
+
+
+void gsx_0code(WORD code)
+{
+    gsx_ncode(code, 0, 0);
 }
 
 
@@ -166,13 +177,32 @@ void gsx_1code(WORD code, WORD value)
 
 
 
+static WORD screen_rez(void)
+{
+    if (HAS_VIDEL)
+        return FALCON_REZ;
+
+    return Getrez();
+}
+
+
+
 static void gsx_wsopen(void)
 {
-    WORD  i;
+    WORD  i, *p = intin;
 
-    for(i=0; i<10; i++)
-        intin[i] = 1;
-    intin[10] = 2;                  /* device coordinate space */
+    /*
+     * set up intin[]: the screen rez (+2) goes into intin[0]
+     *
+     * but there are (undocumented) complications for the Falcon:
+     * we need to use the special pseudo-screen rez, and put the actual
+     * videl mode into ptsout[0] (!).
+     */
+    *p++ = screen_rez() + 2;
+    for (i = 1; i < 10; i++)
+        *p++ = 1;
+    *p = 2;                         /* device coordinate space */
+    gl_ws.ws_pts0 = VsetMode(-1);   /* ptsout points here ... harmless if not a Falcon */
     g_v_opnwk(intin, &gl_handle, &gl_ws);
     gl_graphic = TRUE;
 }
@@ -181,14 +211,14 @@ static void gsx_wsopen(void)
 
 void gsx_wsclose(void)
 {
-    gsx_ncode(CLOSE_WORKSTATION, 0, 0);
+    gsx_0code(CLOSE_WORKSTATION);
 }
 
 
 
 void gsx_wsclear(void)
 {
-    gsx_ncode(CLEAR_WORKSTATION, 0, 0);
+    gsx_0code(CLEAR_WORKSTATION);
 }
 
 
@@ -206,18 +236,19 @@ void ratexit(void)
 }
 
 
+
 static void gsx_setmb(PFVOID boff, PFVOID moff, PFVOID *pdrwaddr)
 {
     i_ptr( boff );
-    gsx_ncode(BUT_VECX, 0, 0);
+    gsx_0code(BUT_VECX);
     m_lptr2( &old_bcode );
 
     i_ptr( moff );
-    gsx_ncode(MOT_VECX, 0, 0);
+    gsx_0code(MOT_VECX);
     m_lptr2( &old_mcode );
 
 /* not used in Atari GEM:
-    i_ptr( justretf );
+    i_ptr( just_rts );
     gsx_ncode(CUR_VECX, 0, 0);
     m_lptr2( pdrwaddr );
 */
@@ -228,10 +259,10 @@ static void gsx_setmb(PFVOID boff, PFVOID moff, PFVOID *pdrwaddr)
 static void gsx_resetmb(void)
 {
     i_ptr( (void*)old_bcode );
-    gsx_ncode(BUT_VECX, 0, 0);
+    gsx_0code(BUT_VECX);
 
     i_ptr( (void*)old_mcode );
-    gsx_ncode(MOT_VECX, 0, 0);
+    gsx_0code(MOT_VECX);
 
 /* not used in Atari GEM:
     i_ptr( (void*)drwaddr );
@@ -239,18 +270,31 @@ static void gsx_resetmb(void)
 */
 }
 
+#if CONF_WITH_EXTENDED_MOUSE
 
+/*
+ * determine if trap #2 has been intercepted by someone else (e.g. NVDI)
+ *
+ * return 1 if intercepted, else 0
+ */
+static BOOL aestrap_intercepted(void)
+{
+    void *trap2_handler = (void *)ULONG_AT(0x88);
+    return !is_text_pointer(trap2_handler);
+}
+
+#endif /* CONF_WITH_EXTENDED_MOUSE */
 
 void gsx_init(void)
 {
     gsx_wsopen();
     gsx_start();
     gsx_setmb(far_bcha, far_mcha, &drwaddr);
-    gsx_ncode(MOUSE_ST, 0, 0);
+    gsx_0code(MOUSE_STATE);
     xrat = ptsout[0];
     yrat = ptsout[1];
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
     /*
      * if NVDI3 has been installed, it will see the following VDI call.
      * since it doesn't understand vex_wheelv() (which is a Milan extension),
@@ -280,13 +324,13 @@ void gsx_graphic(WORD tographic)
         if (gl_graphic)
         {
             contrl[5] = 2;
-            gsx_ncode(ESCAPE_FUNCTION, 0, 0);
+            gsx_0code(ESCAPE_FUNCTION);
             gsx_setmb(far_bcha, far_mcha, &drwaddr);
         }
         else
         {
             contrl[5] = 3;
-            gsx_ncode(ESCAPE_FUNCTION, 0, 0);
+            gsx_0code(ESCAPE_FUNCTION);
             gsx_resetmb();
         }
     }
@@ -356,7 +400,7 @@ void bb_restore(GRECT *pr)
 WORD gsx_tick(void *tcode, void *ptsave)
 {
     i_ptr( tcode );
-    gsx_ncode(TIM_VECX, 0, 0);
+    gsx_0code(TIM_VECX);
     m_lptr2( ptsave );
     return(intout[0]);
 }
@@ -369,7 +413,7 @@ void gsx_mfset(const MFORM *pmfnew)
     if (!gl_ctmown)
         gl_mouse = *pmfnew;
     memcpy(intin, (void *)pmfnew, sizeof(MFORM));
-    gsx_ncode(ST_CUR_FORM, 0, sizeof(MFORM)/sizeof(WORD));
+    gsx_ncode(SET_CUR_FORM, 0, sizeof(MFORM)/sizeof(WORD));
     gsx_mon();
 }
 
@@ -385,7 +429,7 @@ void gsx_mxmy(WORD *pmx, WORD *pmy)
 
 WORD gsx_kstate(void)
 {
-    gsx_ncode(KEY_SHST, 0, 0);
+    gsx_0code(KEY_STATE);
     return(intout[0]);
 }
 
@@ -394,7 +438,7 @@ WORD gsx_kstate(void)
 void gsx_moff(void)
 {
     if (!gl_moff)
-        gsx_ncode(HIDE_CUR, 0, 0);
+        gsx_0code(HIDE_CUR);
 
     gl_moff++;
 }
@@ -454,6 +498,42 @@ WORD gsx_nplanes(void)
     return intout[4];
 }
 
+
+/* Get text size info */
+void gsx_textsize(WORD *charw, WORD *charh, WORD *cellw, WORD *cellh)
+{
+    gsx_0code(INQ_TEXT_ATTRIBUTES);
+    *charw = ptsout[0];
+    *charh = ptsout[1];
+    *cellw = ptsout[2];
+    *cellh = ptsout[3];
+}
+
+
+/*
+ *  Routine to fix up the MFDB of a particular raster form
+ */
+void gsx_fix(FDB *pfd, void *theaddr, WORD wb, WORD h)
+{
+    if (theaddr == NULL)
+    {
+        pfd->fd_w = gl_ws.ws_xres + 1;
+        pfd->fd_wdwidth = pfd->fd_w / 16;
+        pfd->fd_h = gl_ws.ws_yres + 1;
+        pfd->fd_nplanes = gl_nplanes;
+    }
+    else
+    {
+        pfd->fd_wdwidth = wb / 2;
+        pfd->fd_w = wb * 8;
+        pfd->fd_h = h;
+        pfd->fd_nplanes = 1;
+    }
+    pfd->fd_stand = FALSE;
+    pfd->fd_addr = theaddr;
+}
+
+
 /* This function was formerly just called v_opnwk, but there was a
    conflict with the VDI then, so I renamed it to g_v_opnwk  - Thomas */
 static void g_v_opnwk(WORD *pwork_in, WORD *phandle, WS *pwork_out )
@@ -503,7 +583,7 @@ void vst_height(WORD height, WORD *pchr_width, WORD *pchr_height,
 {
     ptsin[0] = 0;
     ptsin[1] = height;
-    gsx_ncode(CHAR_HEIGHT, 1, 0);
+    gsx_ncode(SET_CHAR_HEIGHT, 1, 0);
     *pchr_width = ptsout[0];
     *pchr_height = ptsout[1];
     *pcell_width = ptsout[2];
@@ -528,7 +608,7 @@ void vro_cpyfm(WORD wr_mode, WORD *pxyarray, FDB *psrcMFDB, FDB *pdesMFDB )
     i_ptr( psrcMFDB );
     i_ptr2( pdesMFDB );
     i_ptsin( pxyarray );
-    gsx_ncode(COPY_RASTER_FORM, 4, 1);
+    gsx_ncode(COPY_RASTER_OPAQUE, 4, 1);
     i_ptsin( ptsin );
 }
 
@@ -543,7 +623,7 @@ void vrt_cpyfm(WORD wr_mode, WORD *pxyarray, FDB *psrcMFDB, FDB *pdesMFDB,
     i_ptr( psrcMFDB );
     i_ptr2( pdesMFDB );
     i_ptsin( pxyarray );
-    gsx_ncode(TRAN_RASTER_FORM, 4, 3);
+    gsx_ncode(COPY_RASTER_TRANS, 4, 3);
     i_ptsin( ptsin );
 }
 
@@ -554,7 +634,7 @@ void vrn_trnfm(FDB *psrcMFDB, FDB *pdesMFDB)
     i_ptr( psrcMFDB );
     i_ptr2( pdesMFDB );
 
-    gsx_ncode(TRANSFORM_FORM, 0, 0);
+    gsx_0code(TRANSFORM_FORM);
 }
 
 
@@ -567,16 +647,16 @@ void g_vsl_width(WORD width)
 {
     ptsin[0] = width;
     ptsin[1] = 0;
-    gsx_ncode(S_LINE_WIDTH, 1, 0);
+    gsx_ncode(SET_LINE_WIDTH, 1, 0);
 }
 
 
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 void vex_wheelv(PFVOID new, PFVOID *old)
 {
     i_ptr(new);
-    gsx_ncode(WHEEL_VECX, 0, 0);
+    gsx_0code(WHEEL_VECX);
     m_lptr2(old);
 }
 #endif

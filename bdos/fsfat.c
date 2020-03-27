@@ -2,7 +2,7 @@
  * fsfat.c - fat mgmt routines for file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2018 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -10,12 +10,11 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
 #include "fs.h"
 #include "gemerror.h"
-#include "kprint.h"
+#include "bdosstub.h"
 
 /*
 **  cl2rec -
@@ -39,7 +38,7 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
     int spans;
     CLNO f, mask;
     LONG offset, recnum;
-    char *buf;
+    UBYTE *buf;
 
     offset = dm->m_16 ? (LONG)cl << 1 : ((LONG)cl + (cl >> 1));
     recnum = offset >> dm->m_rblog;
@@ -75,10 +74,10 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
 
     /* get current contents */
     buf = getrec(recnum,dm->m_fatofd,0) + offset;
-    f = *(UBYTE *)buf++ << 8;
+    f = *buf++ << 8;
     if (spans)
         buf = getrec(recnum+1,dm->m_fatofd,0);
-    f |= *(UBYTE *)buf;
+    f |= *buf;
 
     /* update */
     swpw(f);
@@ -87,10 +86,10 @@ void clfix(CLNO cl, CLNO link, DMD *dm)
 
     /* write back */
     buf = getrec(recnum,dm->m_fatofd,1) + offset;
-    *(UBYTE *)buf++ = f >> 8;
+    *buf++ = HIBYTE(f);
     if (spans)
         buf = getrec(recnum+1,dm->m_fatofd,1);
-    *(UBYTE *)buf = LOBYTE(f);
+    *buf = LOBYTE(f);
 }
 
 
@@ -109,7 +108,7 @@ CLNO getrealcl(CLNO cl, DMD *dm)
 {
     CLNO f;
     LONG offset, recnum;
-    char *buf;
+    UBYTE *buf;
 
     offset = dm->m_16 ? (LONG)cl << 1 : ((LONG)cl + (cl >> 1));
     recnum = offset >> dm->m_rblog;
@@ -130,10 +129,10 @@ CLNO getrealcl(CLNO cl, DMD *dm)
     /*
      * handle 12-bit FATs
      */
-    f = *(UBYTE *)buf++ << 8;
+    f = *buf++ << 8;
     if (dm->m_recsiz-offset == 1) /* content spans FAT sectors ... */
         buf = getrec(recnum+1,dm->m_fatofd,0);
-    f |= *(UBYTE *)buf;
+    f |= *buf;
 
     swpw(f);
 
@@ -176,7 +175,7 @@ static CLNO findfree16(DMD *dm)
 {
     int recnum, offset;
     CLNO clnum;
-    char *buf;
+    UBYTE *buf;
 
     for (clnum = 2; clnum < dm->m_numcl+2; )
     {
@@ -300,7 +299,7 @@ static CLNO countfree16(DMD *dm)
 {
     int recnum, offset;
     CLNO free, clnum;
-    char *buf;
+    UBYTE *buf;
 
     for (clnum = 2, free = 0; clnum < dm->m_numcl+2; )
     {

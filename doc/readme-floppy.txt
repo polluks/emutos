@@ -12,6 +12,7 @@ emutosfi.st - Finnish (PAL)
 emutosfr.st - French (PAL)
 emutosgr.st - Greek (PAL)
 emutosit.st - Italian (PAL)
+emutosnl.st - Dutch (PAL)
 emutosno.st - Norwegian (PAL)
 emutosru.st - Russian (PAL)
 emutosse.st - Swedish (PAL)
@@ -20,8 +21,6 @@ emutosuk.st - English (PAL)
 emutosus.st - English (NTSC)
 
 The following optional files are also supplied:
-emucurs.rsc - modifiable mouse cursors for the AES/desktop
-emucurs.def - definition file for the above
 emuicon.rsc - contains additional icons for the desktop
 emuicon.def - definition file for the above
 

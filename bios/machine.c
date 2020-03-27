@@ -1,7 +1,7 @@
 /*
  * machine.c - detection of machine type
  *
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -12,10 +12,10 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "cookie.h"
 #include "machine.h"
+#include "has.h"
 #include "processor.h"
 #include "biosmem.h"
 #include "vectors.h"
@@ -27,7 +27,6 @@
 #include "xhdi.h"
 #include "string.h"
 #include "dmasound.h"
-#include "kprint.h"
 #include "scsi.h"
 #include "ide.h"
 #include "asm.h"
@@ -38,6 +37,7 @@
 #include "coldfire.h"
 #include "dma.h"
 #include "nova.h"
+#include "biosext.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif

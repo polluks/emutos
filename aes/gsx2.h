@@ -1,7 +1,7 @@
 /*
  * gsx2.h - VDI (GSX) bindings
  *
- * Copyright (C) 2014-2015 The EmuTOS development team
+ * Copyright (C) 2014-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -12,8 +12,6 @@
 
 #ifndef GSX2_H
 #define GSX2_H
-
-#include "portab.h"
 
 /* VDI parameter block */
 typedef struct
@@ -31,9 +29,9 @@ extern VDIPB vdipb;
 #define i_ptsin(p)  (vdipb.ptsin = (p))
 #define i_intout(p) (vdipb.intout = (p))
 #define i_ptsout(p) (vdipb.ptsout = (p))
-#define i_ptr(p)    (*(LONG_ALIAS*)(contrl+7) = (LONG)(p))
-#define i_ptr2(p)   (*(LONG_ALIAS*)(contrl+9) = (LONG)(p))
-#define m_lptr2(p)  (*(LONG_ALIAS*)(p) = *(LONG_ALIAS*)(contrl+9))
+#define i_ptr(p)    (ULONG_AT(contrl+7) = (ULONG)(p))
+#define i_ptr2(p)   (ULONG_AT(contrl+9) = (ULONG)(p))
+#define m_lptr2(p)  (ULONG_AT(p) = ULONG_AT(contrl+9))
 
 void gsx2(void);
 

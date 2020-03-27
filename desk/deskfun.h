@@ -1,7 +1,7 @@
 /*
  * EmuTOS desktop - header for deskfun.c
  *
- * Copyright (C) 2002-2018 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -18,17 +18,21 @@
 #define CLOSE_TO_ROOT   2       /* display root folder in window */
 
 WORD fun_alert(WORD defbut, WORD stnum);
-WORD fun_alert_merge(WORD defbut, WORD stnum, char merge);
-WORD fun_alert_string(WORD defbut, WORD stnum, char *merge);
+WORD fun_alert_merge(WORD defbut, WORD stnum, ...);
 
-#if CONF_WITH_FORMAT
-WORD fun_alert_long(WORD defbut, WORD stnum, LONG merge);
+#if CONF_WITH_SEARCH
+void fun_search(WORD curr, WNODE *pw);
+#endif
+
+#if CONF_WITH_SELECTALL
+void fun_selectall(WNODE *pw);
 #endif
 
 #if CONF_WITH_FILEMASK
 void fun_mask(WNODE *pw);
 #endif
 
+BOOL add_one_level(char *pathname,char *folder);
 void fun_close(WNODE *pw, WORD closetype);
 BOOL fun_drag(WORD wh, WORD dest_wh, WORD sobj, WORD dobj, WORD mx, WORD my, WORD keystate);
 void fun_msg(WORD type, WORD w3, WORD w4, WORD w5, WORD w6, WORD w7);

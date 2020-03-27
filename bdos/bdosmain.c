@@ -2,7 +2,7 @@
  * bdosmain.c - GEMDOS main function dispatcher
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2017 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * Authors:
  *  EWF  Eric W. Fleischman
@@ -20,8 +20,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "fs.h"
 #include "biosdefs.h"
 #include "mem.h"
@@ -31,8 +30,8 @@
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
-#include "kprint.h"
-#include "dos.h"
+#include "bdosstub.h"
+#include "tosvars.h"
 
 /*
 **  externals
@@ -42,9 +41,9 @@
  * in rwa.S
  */
 
-extern void enter(void);
-extern void bdos_trap2(void);
-extern PFVOID old_trap2;
+void enter(void);       /* defined in rwa.S */
+void bdos_trap2(void);  /* defined in rwa.S */
+PFVOID old_trap2; /* Old trap #2 handler, also used by rwa.S */
 
 /*
  *  prototypes / forward declarations
@@ -317,6 +316,8 @@ void osinit_before_xmaddalt(void)
      */
     old_trap2 = (PFVOID) Setexc(0x22, (long)bdos_trap2);
 
+    bufl_init();    /* initialize BDOS buffer list */
+
     osmem_init();
     umem_init();
 }
@@ -329,8 +330,6 @@ void osinit_after_xmaddalt(void)
     run = &initial_basepage;
     run->p_flags = PF_STANDARD;
 
-    bufl_init();    /* initialize BDOS buffer list, now Malloc is available */
-
     time_init();
 
     KDEBUG(("BDOS: address of basepage = %p\n", run));
@@ -338,6 +337,28 @@ void osinit_after_xmaddalt(void)
     stdhdl_init();  /* set up system initial standard handles */
 
     KDEBUG(("BDOS: cinit - osinit successful ...\n"));
+}
+
+#define ENV_SIZE    11          /* sufficient for standard PATH=^X:\^^ (^=nul byte) */
+#define DEF_PATH    "A:\\"      /* default value for path */
+
+static char default_env[ENV_SIZE];  /* default environment area */
+
+/* BIOS will call this after bootdev has been initialized */
+
+void osinit_environment(void)
+{
+    char *p;
+
+    /* Build default environment, just a PATH= string */
+    strcpy(default_env,PATH_ENV);
+    p = default_env + sizeof(PATH_ENV); /* point to first byte of path string */
+    strcpy(p,DEF_PATH);
+    *p += bootdev;                      /* fix up drive letter */
+    p += sizeof(DEF_PATH);
+    *p = '\0';                          /* terminate with double nul */
+
+    initial_basepage.p_env = default_env;
 }
 
 
@@ -394,8 +415,9 @@ static void offree(DMD *d)
 
 
 /*
- *  osif -
+ *  osif - C implementation of trap #1. Called by _enter.
  */
+long osif(short *pw);   /* called only from rwa.S */
 long osif(short *pw)
 {
     char **pb, *pb2, *p, ctmp;
@@ -477,6 +499,7 @@ restrt:
             case 6:                 /* Crawio() */
                 if (pw[1] != 0xFF)
                     goto rawout;
+                FALLTHROUGH;
             case 1:                 /* Cconin() */
             case 3:                 /* Cauxin() */
             case 7:                 /* Crawcin() */
@@ -527,7 +550,7 @@ restrt:
             case 18:                /* Cauxis() */
                 if (eof(h))
                     return 0L;
-                /* drop through */
+                FALLTHROUGH;
 
             case 16:                /* Cconos() */
             case 17:                /* Cprnos() */

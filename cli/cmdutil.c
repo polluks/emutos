@@ -1,7 +1,7 @@
 /*
  * EmuCON2 utility routines
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#include <string.h>
+#include "string.h"
 #include <stdarg.h>
 #include "doprintf.h"
 
@@ -82,7 +82,7 @@ const char *p;
     case USER_BREAK:
         p = _("interrupted");
         break;
-    case INVALID_PATH:
+    case NOT_DIRECTORY:
         p = _("invalid path");
         break;
     case DISK_FULL:

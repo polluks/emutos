@@ -1,7 +1,7 @@
 /*
- * tosvars.h - name of low-memory variables
+ * tosvars.h - declarations of low-memory system variables
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -11,14 +11,19 @@
  */
 
 /*
- * Put in this file only the low-mem vars actually used by
- * C code.
+ * The system variables are only accessible from supervisor mode.
+ * Each variable has a fixed address documented by Atari.
+ * Actual addresses are defined in tosvars.ld
  */
 
 #ifndef TOSVARS_H
 #define TOSVARS_H
 
-#include "portab.h"
+#include "biosdefs.h"
+
+/* Forward declarations */
+struct _md;
+struct _bcb;
 
 extern LONG proc_lives;
 extern LONG proc_dregs[];
@@ -38,6 +43,7 @@ extern UBYTE *v_bas_ad;
 
 extern const UWORD *colorptr;
 extern UBYTE *screenpt;
+extern UBYTE defshiftmod;
 extern UBYTE sshiftmod;
 
 extern UBYTE *phystop;
@@ -53,43 +59,16 @@ extern WORD bootdev;
 extern WORD fverify;
 extern WORD seekrate;
 extern WORD dumpflg;
-extern WORD nvbls;
+extern WORD nvbls; /* Number of slots in the array pointed by vblqueue */
 extern volatile WORD vblsem;
-extern LONG vbl_list[];
-extern LONG *vblqueue;
+extern PFVOID *vblqueue; /* Pointer to the VBL queue array */
 extern volatile LONG frclock;
 extern LONG *p_cookies;
 extern WORD save_row;     /* saved row in escape Y command */
 
-
-extern LONG sysbase;
-extern void os_entry(void) NORETURN;
-extern LONG os_beg;
-extern LONG os_date;
-extern UWORD os_dosdate;
-extern WORD os_conf;
-extern void (*exec_os)(void) NORETURN;
+extern const OSHEADER *sysbase;
+extern PRG_ENTRY *exec_os;
 extern UBYTE *end_os;
-
-/* these symbols are automatically created by ld */
-extern UBYTE _text[];     /* start of TEXT segment */
-extern UBYTE _etext[];    /* end of TEXT segment */
-extern UBYTE _data[];     /* start of DATA segment */
-extern UBYTE _edata[];    /* end of DATA segment */
-extern UBYTE _bss[];      /* start of BSS segment */
-extern UBYTE _ebss[];     /* end of BSS segment */
-extern UBYTE _end_os_stram[]; /* end of the RAM used by the OS in ST-RAM */
-
-#if CONF_WITH_STATIC_ALT_RAM
-/* Static Alt-RAM is the area used by static data (BSS and maybe TEXT) */
-extern UBYTE _static_altram_start[];
-extern UBYTE _static_altram_end[];
-#endif
-
-extern UBYTE _endvdibss[];  /* end of VDI BSS */
-#if WITH_AES
-extern UBYTE _endgembss[];  /* end of GEM BSS */
-#endif
 
 extern UBYTE *membot;
 extern UBYTE *memtop;
@@ -99,9 +78,10 @@ extern UBYTE *ramtop;     /* top of TT-RAM, or NULL if no TT-RAM is present */
 #define RAMVALID_MAGIC 0x1357BD13
 extern LONG ramvalid;     /* if equal to RAMVALID_MAGIC, then ramtop is valid */
 
-extern LONG os_magic;     /* if == 0x87654321, means that GEM is present */
-
 extern LONG savptr;
+
+extern struct _md themd;  /* BIOS memory descriptor */
+extern struct _bcb *bufl[2]; /* buffer lists - two lists:  FAT and dir/data */
 
 extern void (*prt_stat)(void);
 extern void (*prt_vec)(void);
@@ -125,33 +105,10 @@ extern void (*hdv_init)(void);
 extern void (*bell_hook)(void);
 extern void (*kcl_hook)(void);
 
-extern void (*etv_timer)(int);
+extern ETV_TIMER_T etv_timer;
 extern LONG (*etv_critic)(WORD err,WORD dev);
 extern void (*etv_term)(void);
 
-
-extern void (*mousexvec)(WORD scancode);    /* Additional mouse buttons */
-
-struct kbdvecs
-{
-    PFVOID midivec;     /* MIDI Input */
-    PFVOID vkbderr;     /* IKBD Error */
-    PFVOID vmiderr;     /* MIDI Error */
-    PFVOID statvec;     /* IKBD Status */
-    PFVOID mousevec;    /* IKBD Mouse */
-    PFVOID clockvec;    /* IKBD Clock */
-    PFVOID joyvec;      /* IKBD Joystick */
-    PFVOID midisys;     /* Main MIDI Vector */
-    PFVOID ikbdsys;     /* Main IKBD Vector */
-};
-extern struct kbdvecs kbdvecs;
-
-#if CONF_DETECT_FIRST_BOOT_WITHOUT_MEMCONF
-#define WARM_MAGIC 0x5741524D /* 'WARM' */
-extern ULONG warm_magic;
-#endif
-
-extern UBYTE stkbot[]; /* BIOS internal stack */
-extern UBYTE stktop[];
+extern void (*swv_vec)(void);
 
 #endif /* TOSVARS_H */

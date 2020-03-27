@@ -2,7 +2,7 @@
  * font.c - bios part of font loading and initialization
  *
  * Copyright (C) 2004-2014 by Authors (see below)
- * Copyright (C) 2016-2017 The EmuTOS development team
+ * Copyright (C) 2016-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD  Martin Doering
@@ -13,20 +13,19 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
+#include "emutos.h"
 #include "font.h"
 #include "country.h"
 #include "string.h"
 #include "lineavars.h"
-#include "kprint.h"
 
 /* RAM-copies of the ROM-fontheaders */
-Fonthead *sysfonts[4];  /* all three fonts and NULL */
 Fonthead fon8x16;
 Fonthead fon8x8;
 Fonthead fon6x6;
 
-
+/* system font array used by linea0 */
+const Fonthead *sysfonts[4];    /* all three fonts and NULL */
 
 /*
  * font_init - set default font to linea, font ring initialization
@@ -46,20 +45,21 @@ void font_init(void)
     fon8x8 = *f8x8;
     fon8x16 = *f8x16;
 
-    /* now in RAM, chain the font headers to a linked list */
-
-    fon6x6.next_font = &fon8x8;
+    /*
+     * now in RAM, chain only the 8x8 & 8x16 font headers in a linked list.
+     * this is how Atari TOS does it, and is required for text_init()
+     * [in vdi_text.c] to set up font_ring[] correctly, and subsequently
+     * calculate DEV_TAB[5] and font_count correctly.
+     */
     fon8x8.next_font = &fon8x16;
-    fon8x16.next_font = 0;
+    font_count = 1;     /* number of different font ids in font_ring[] */
 
     /* Initialize the system font array for linea */
 
-    sysfonts[0] = &fon6x6;
-    sysfonts[1] = &fon8x8;
-    sysfonts[2] = &fon8x16;
+    sysfonts[0] = f6x6;
+    sysfonts[1] = f8x8;
+    sysfonts[2] = f8x16;
     sysfonts[3] = NULL;
-
-    font_count = 3;               /* total number of fonts in fontring */
 }
 
 /*

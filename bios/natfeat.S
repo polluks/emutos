@@ -1,7 +1,7 @@
 /*
  * natfeat.S - EmuTOS NatFeat detection routine
  *
- * Copyright (C) 2001-2017 by the EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -10,13 +10,9 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
-
 #include "asmdefs.h"
 
-
 // ==== References ===========================================================
-
 
 #if DETECT_NATIVE_FEATURES
         .globl  _detect_native_features

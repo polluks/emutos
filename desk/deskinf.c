@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*       Copyright (C) 2002-2018 The EmuTOS development team
+*       Copyright (C) 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,22 +19,21 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
 #include "gsxdefs.h"
-#include "dos.h"
 #include "gemdos.h"
 #include "optimopt.h"
 #include "optimize.h"
 
+#include "aesdefs.h"
+#include "aesext.h"
 #include "deskbind.h"
 #include "deskglob.h"
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
-#include "gembind.h"
 #include "aesbind.h"
 #include "deskmain.h"
 #include "deskdir.h"
@@ -43,8 +42,10 @@
 #include "deskinf.h"
 #include "deskins.h"
 #include "deskfun.h"
-#include "../bios/country.h"
-#include "kprint.h"
+#include "biosdefs.h"
+#include "biosext.h"
+#include "has.h"
+#include "nls.h"
 
 
 /*
@@ -82,7 +83,7 @@ static char *fmt_time(UWORD time, char *fmt_string, char *ptime)
     case TIMEFORM_IDT:
         if ((cookie_idt&IDT_TMASK) == IDT_24H)
             break;
-        /* else 12 hour clock, so drop thru */
+        FALLTHROUGH; /* else 12 hour clock */
     case TIMEFORM_12H:
         if (hh >= 12)
         {
@@ -234,9 +235,9 @@ static WORD format_fnode(LONG pfnode, char *pfmt)
     /*
      * folder or read-only indicator
      */
-    if (pf->f_attr & F_SUBDIR)
+    if (pf->f_attr & FA_SUBDIR)
         indicator = 0x07;
-    else if (pf->f_attr & F_RDONLY)
+    else if (pf->f_attr & FA_RO)
         indicator = 0x7f;
     else indicator = ' ';
     *pdst++ = indicator;
@@ -265,7 +266,7 @@ static WORD format_fnode(LONG pfnode, char *pfmt)
     /*
      * size
      */
-    if (pf->f_attr & F_SUBDIR)
+    if (pf->f_attr & FA_SUBDIR)
     {
         WORD n = wide ? 11 : 8;
         while(n--)
@@ -291,6 +292,17 @@ static WORD format_fnode(LONG pfnode, char *pfmt)
     if (wide)
         *pdst++ = ' ';
     pdst = fmt_time(pf->f_time, wide?"%02d:%02d %s":"%02d:%02d%s", pdst);
+
+    /*
+     * trim 2 trailing spaces (present iff 24H clock) which will make the
+     * line 36 characters wide.  this allows it to be written via 'fast
+     * text output' in a maximum-sized window in low-rez.
+     */
+    if (*(pdst-2) == ' ')
+    {
+        pdst -= 2;
+        *pdst = '\0';
+    }
 
     return (pdst-pfmt);
 }
@@ -409,6 +421,19 @@ void inf_numset(OBJECT *tree, WORD obj, ULONG value)
 
 
 /*
+ *  Formats a 'normal' filename-only string and copies it to the
+ *  te_ptext field of the specified object
+ */
+void set_tedinfo_name(OBJECT *tree, WORD obj, char *str)
+{
+    char temp[LEN_ZFNAME];
+
+    fmt_str(str, temp);
+    inf_sset(tree, obj, temp);
+}
+
+
+/*
  * Routine to put number of files, folders and size into
  * a dialog box
  */
@@ -476,12 +501,12 @@ WORD inf_file_folder(char *ppath, FNODE *pf)
     char poname[LEN_ZFNAME], pnname[LEN_ZFNAME];
     OBJECT *obj;
 
-    tree = G.a_trees[ADFFINFO];
+    tree = desk_rs_trees[ADFFINFO];
     deselect_all(tree);
 
-    title = (pf->f_attr & F_SUBDIR) ? STFOINFO : STFIINFO;
+    title = (pf->f_attr & FA_SUBDIR) ? STFOINFO : STFIINFO;
     obj = tree + FFTITLE;
-    obj->ob_spec = (LONG) ini_str(title);
+    obj->ob_spec = (LONG) desktop_str_addr(title);
     centre_title(tree);
 
     strcpy(srcpth, ppath);
@@ -492,13 +517,13 @@ WORD inf_file_folder(char *ppath, FNODE *pf)
      * for folders, count the contents & insert the values in the
      * dialog; for files, blank out the corresponding dialog fields
      */
-    if (pf->f_attr & F_SUBDIR)
+    if (pf->f_attr & FA_SUBDIR)
     {
-        graf_mouse(HGLASS, NULL);
+        desk_busy_on();
         strcpy(srcpth+nmidx, pf->f_name);
         strcat(srcpth, "\\*.*");
         more = count_ffs(srcpth);
-        graf_mouse(ARROW, NULL);
+        desk_busy_off();
 
         if (!more)
             return 1;
@@ -529,17 +554,17 @@ WORD inf_file_folder(char *ppath, FNODE *pf)
          * initialise the attributes display
          */
         obj = tree + FFRONLY;
-        if (pf->f_attr & F_SUBDIR)
+        if (pf->f_attr & FA_SUBDIR)
             obj->ob_state = DISABLED;
-        else if (pf->f_attr & F_RDONLY)
+        else if (pf->f_attr & FA_RO)
             obj->ob_state = SELECTED;
         else
             obj->ob_state = NORMAL;
 
         obj = tree + FFRWRITE;
-        if (pf->f_attr & F_SUBDIR)
+        if (pf->f_attr & FA_SUBDIR)
             obj->ob_state = DISABLED;
-        else if (!(pf->f_attr & F_RDONLY))
+        else if (!(pf->f_attr & FA_RO))
             obj->ob_state = SELECTED;
         else
             obj->ob_state = NORMAL;
@@ -554,7 +579,7 @@ WORD inf_file_folder(char *ppath, FNODE *pf)
         /*
          * user selected OK - we rename and/or change attributes
          */
-        graf_mouse(HGLASS, NULL);
+        desk_busy_on();
 
         inf_sget(tree, FFNAME, pnname);
 
@@ -567,14 +592,14 @@ WORD inf_file_folder(char *ppath, FNODE *pf)
          * and remember that we made a change
          * (like Atari TOS, we don't check the return code from dos_chmod())
          */
-        if (!(pf->f_attr & F_SUBDIR))
+        if (!(pf->f_attr & FA_SUBDIR))
         {
             attr = pf->f_attr;
             obj = tree + FFRONLY;
             if (obj->ob_state & SELECTED)
-                attr |= F_RDONLY;
+                attr |= FA_RO;
             else
-                attr &= ~F_RDONLY;
+                attr &= ~FA_RO;
             if (attr != pf->f_attr)
             {
                 dos_chmod(srcpth, F_SETMOD, attr);
@@ -608,7 +633,7 @@ WORD inf_file_folder(char *ppath, FNODE *pf)
             break;
     }
 
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
 
     return changed ? -1 : 1;
 }
@@ -637,8 +662,8 @@ WORD inf_disk(char dr_id)
     if (!valid_drive(dr_id))
         return 1;
 
-    graf_mouse(HGLASS, NULL);
-    tree = G.a_trees[ADDISKIN];
+    desk_busy_on();
+    tree = desk_rs_trees[ADDISKIN];
 
     srcpth[0] = dr_id;
     srcpth[1] = ':';
@@ -647,19 +672,18 @@ WORD inf_disk(char dr_id)
 
     if (!more)
     {
-        graf_mouse(ARROW, NULL);
+        desk_busy_off();
         return 1;
     }
 
     dos_space(dr_id - 'A' + 1, &total, &avail);
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
 
     if (!dos_label(dr_id - 'A' + 1, label))
         label[0] = '\0';
 
     inf_sset(tree, DIDRIVE, drive);
-    fmt_str(label, srcpth);
-    inf_sset(tree, DIVOLUME, srcpth);
+    set_tedinfo_name(tree, DIVOLUME, label);
 
     inf_fifosz(tree, DINFILES, DINFOLDS, DIUSED);
     inf_numset(tree, DIAVAIL, avail);
@@ -696,10 +720,9 @@ static WORD inf_which(OBJECT *tree, WORD baseobj, WORD numobj)
  */
 WORD inf_pref(void)
 {
-    OBJECT *tree1 = G.a_trees[ADSETPRE];
-    OBJECT *tree2 = G.a_trees[ADSETPR2];
+    OBJECT *tree1 = desk_rs_trees[ADSETPRE];
+    OBJECT *tree2 = desk_rs_trees[ADSETPR2];
     WORD oldtime, olddate;
-    WORD sndefpref;
     WORD button;
 
     /*
@@ -725,12 +748,6 @@ WORD inf_pref(void)
         tree1[SPCOWYES].ob_state |= SELECTED;
     else
         tree1[SPCOWNO].ob_state |= SELECTED;
-
-    sndefpref = !sound(FALSE, 0xFFFF, 0);
-    if (sndefpref)
-        tree1[SPSEYES].ob_state |= SELECTED;
-    else
-        tree1[SPSENO].ob_state |= SELECTED;
 
     /* select buttons corresponding to current state of more preferences */
     G.g_cdclkpref = evnt_dclick(0, FALSE);
@@ -786,8 +803,6 @@ WORD inf_pref(void)
         G.g_cdelepref = inf_which(tree1, SPCDYES, 2);
         G.g_ccopypref = inf_which(tree1, SPCCYES, 2);
         G.g_covwrpref = inf_which(tree1, SPCOWYES, 2);
-        sndefpref = inf_which(tree1, SPSEYES, 2);
-        sound(FALSE, !sndefpref, 0);
 
         G.g_cdclkpref = inf_gindex(tree2, SPDC1, 5);
         G.g_cdclkpref = evnt_dclick(G.g_cdclkpref, TRUE);
@@ -850,7 +865,7 @@ BOOL inf_backgrounds(void)
         break;
     }
 
-    tree = G.a_trees[ADBKGND];
+    tree = desk_rs_trees[ADBKGND];
 
     /* hide colours that are not available in the current resolution */
     for (i = unused, obj = tree+BGCOL0+unused; i < 16; i++, obj++)
@@ -905,6 +920,7 @@ BOOL inf_backgrounds(void)
         /* check for desktop background change */
         if (G.g_screen[DROOT].ob_spec != curdesk)
         {
+            set_aes_background(curdesk & 0xff);
             G.g_patcol[index].desktop = curdesk & 0xff;
             G.g_screen[DROOT].ob_spec = curdesk;
             do_wredraw(DESKWH, (GRECT *)&G.g_xdesk);
@@ -927,12 +943,181 @@ BOOL inf_backgrounds(void)
 
 #if CONF_WITH_DESKTOP_CONFIG
 /*
+ *  get ptrs to all ANODEs with associated function keys
+ */
+static void get_all_funkeys(ANODE **retptr)
+{
+    ANODE *pa;
+    int i;
+
+    /* initialise pointers in return array */
+    for (i = 0; i < NUM_FUNKEYS; i++)
+        retptr[i] = NULL;
+
+    /* update return pointers for any function keys found */
+    for (pa = G.g_ahead; pa; pa = pa->a_next)
+    {
+        i = pa->a_funkey - FIRST_FUNKEY;
+        if ((i >= 0) && (i < NUM_FUNKEYS))
+            retptr[i] = pa;
+    }
+}
+
+
+/* variables for managing text scrolling in function key display */
+static WORD textpos, maxpos;
+
+
+/*
+ *  scroll function key text in desktop configuration dialog
+ *
+ *  returns TRUE iff displayed text has changed
+ */
+static BOOL scroll_conf_funkeys(OBJECT *tree, ANODE *pa, WORD amount)
+{
+    WORD newpos = textpos + amount;
+
+    /*
+     * note: if there are no function keys assigned, textpos and
+     * maxpos will be zero, so newpos will either be -1 or +1 after
+     * an attempted scroll, and we will return FALSE immediately
+     */
+    if ((newpos < 0) || (newpos > maxpos))
+        return FALSE;
+
+    textpos = newpos;
+    inf_sset(tree, DCFUNPTH, pa->a_pappl+textpos);
+
+    return TRUE;
+}
+
+
+/*
+ *  initialise desktop configuration dialog with function key info
+ */
+static void init_conf_funkeys(OBJECT *tree, ANODE *pa)
+{
+    OBJECT  *obj;
+    TEDINFO *ted;
+    char fkey[5];
+
+    sprintf(fkey, "%2d", pa->a_funkey);
+    inf_sset(tree, DCFUNNUM, fkey);
+
+    /* set up scrollable text */
+    obj = tree + DCFUNPTH;
+    ted = (TEDINFO *)obj->ob_spec;
+    maxpos = strlen(pa->a_pappl) - ted->te_txtlen + 1;
+    if (maxpos < 0)
+        maxpos = 0;
+    textpos = 0;
+    scroll_conf_funkeys(tree, pa, 0);
+}
+
+
+/*
+ *  initialise desktop configuration dialog with shortcut info
+ */
+static void init_conf_shortcuts(OBJECT *tree, WORD shortcut_num)
+{
+    OBJECT *obj, *menu = desk_rs_trees[ADMENU];
+    char key;
+
+    /* insert current shortcut (if it exists) */
+    key = menu_shortcuts[shortcut_num];
+    if (!key)
+        key = ' ';
+    inf_sset(tree, DCMNUKEY, &key);
+
+    /* insert menu item text, without shortcut & with enough spaces to fill text field */
+    obj = menu + shortcut_mapping[shortcut_num];
+    strcpy(G.g_work, (char *)obj->ob_spec+2);
+    memset(G.g_work+strlen(G.g_work)-SHORTCUT_SIZE, ' ', 40);
+    inf_sset(tree, DCMNUTXT, G.g_work);
+}
+
+
+/*
+ *  copy the shortcut key from the resource to the shortcuts array
+ *
+ *  we check for a duplicate; if found, we issue an alert, giving the
+ *  user the choice of making the change (and zeroing out the duplicate
+ *  occurrence), or cancelling
+ */
+static void save_shortcut(OBJECT *tree, WORD n)
+{
+    char key[2];
+    WORD i;
+
+    inf_sget(tree, DCMNUKEY, key);
+
+    if ((key[0] >= 'A') && (key[0] <= 'Z'))
+    {
+        for (i = 0; i < NUM_SHORTCUTS; i++)
+        {
+            if (i == n)     /* ignore ourselves */
+                continue;
+            if (menu_shortcuts[i] == key[0])    /* duplicate shortcut */
+            {
+                if (fun_alert(2, STDUPCUT) != 1)    /* user cancelled */
+                    return;
+                menu_shortcuts[i] = 0x00;
+                break;
+            }
+        }
+    }
+    else
+    {
+        key[0] = 0x00;
+    }
+    
+    menu_shortcuts[n] = key[0];
+}
+
+
+/*
+ *  recover menu shortcuts
+ *
+ *  this rebuilds the shortcut array from the current contents of the
+ *  menu items
+ */
+static void recover_shortcuts(void)
+{
+    OBJECT *obj, *tree = desk_rs_trees[ADMENU];
+    char *p, c;
+    WORD i, n;
+
+    for (i = 0; i < NUM_SHORTCUTS; i++)
+    {
+        n = shortcut_mapping[i];
+        /*
+         * check if menu item exists for this shortcut position; if not,
+         * we must clear any associated shortcut to ensure that the
+         * shortcut array matches the displayed menu items
+         */
+        c = 0x00;       /* default value to enter */
+        if (n)          /* there is an associated menu item */
+        {
+            obj = tree + n;
+            p = (char *)obj->ob_spec + (obj->ob_width+CHAR_WIDTH-1)/CHAR_WIDTH - SHORTCUT_SIZE;
+            if (*p == '^')      /* there is a shortcut */
+                c = *(p+1);     /* so get it */
+        }
+        menu_shortcuts[i] = c;  /* update array */
+    }
+}
+
+
+/*
  *      Handle desktop configuration dialog
  */
 void inf_conf(void)
 {
-    OBJECT *tree = G.a_trees[ADDESKCF];
-    WORD button;
+    OBJECT *tree = desk_rs_trees[ADDESKCF];
+    ANODE *pa[NUM_FUNKEYS];
+    WORD exitobj, redraw, current_funkey, current_shortcut;
+    WORD i, n;
+    BOOL done = FALSE;
 
     /* first, deselect all objects */
     deselect_all(tree);
@@ -948,15 +1133,134 @@ void inf_conf(void)
     else
         tree[DCPMFILE].ob_state |= SELECTED;
 
-    /* allow user to select preferences */
-    inf_show(tree, ROOT);
-    button = inf_what(tree, DCOK, DC_CNCL);
+    /* set up available memory line */
+    n = sprintf(G.g_work, "%ld %s", dos_avail_stram()/1024L, _("KB"));
+#if CONF_WITH_ALT_RAM
+    if (has_alt_ram)
+        n += sprintf(G.g_work+n, " + %ld %s", dos_avail_altram()/1024L, _("KB"));
+#endif
+    memset(G.g_work+n, ' ', 40);    /* enough spaces to fill object's text field */
+    inf_sset(tree, DCFREMEM, G.g_work);
 
-    if (button)
+    /*
+     * function key setup
+     */
+    /* get anode ptrs for all anodes with function keys */
+    get_all_funkeys(pa);
+
+    /* initialise scrolling variables */
+    textpos = maxpos = 0;
+
+    /* find lowest function key */
+    for (current_funkey = 0; current_funkey < NUM_FUNKEYS; current_funkey++)
+        if (pa[current_funkey])
+            break;
+    if (current_funkey < NUM_FUNKEYS)
+        init_conf_funkeys(tree, pa[current_funkey]);
+    else
+        current_funkey = 0;     /* ensure legal value for array index */
+
+    /*
+     * menu shortcut setup
+     */
+    /* find lowest available menu item */
+    for (current_shortcut = 0; current_shortcut < NUM_SHORTCUTS; current_shortcut++)
+        if (shortcut_mapping[current_shortcut])
+            break;
+    if (current_shortcut < NUM_SHORTCUTS)
+        init_conf_shortcuts(tree, current_shortcut);
+    else
+        current_shortcut = 0;   /* "can't happen" */
+
+    /* interact with user */
+    start_dialog(tree);
+    while(1)
     {
-        G.g_appdir = inf_which(tree, DCDEFAPP, 2);
-        G.g_fullpath = inf_which(tree, DCPMFULL, 2);
+        redraw = -1;            /* by default, no redraw */
+        exitobj = form_do(tree, 0) & 0x7fff;
+        switch(exitobj)
+        {
+        case DCFUNPRV:          /* previous function key assignment */
+            for (i = current_funkey-1; i >= 0; i--)     /* look for next lower */
+                if (pa[i])
+                    break;
+            if (i >= 0)             /* found one */
+            {
+                current_funkey = i;
+                init_conf_funkeys(tree, pa[current_funkey]);
+                redraw = DCFUNBOX;
+            }
+            break;
+        case DCFUNNXT:          /* next function key assignment */
+            for (i = current_funkey+1; i < NUM_FUNKEYS; i++)    /* look for next higher */
+                if (pa[i])
+                    break;
+            if (i < NUM_FUNKEYS)    /* found one */
+            {
+                current_funkey = i;
+                init_conf_funkeys(tree, pa[current_funkey]);
+                redraw = DCFUNBOX;
+            }
+            break;
+        case DCFUNLT:           /* handle scroll left */
+            if (scroll_conf_funkeys(tree, pa[current_funkey], -1))
+                redraw = DCFUNPTH;
+            break;
+        case DCFUNRT:           /* handle scroll right */
+            if (scroll_conf_funkeys(tree, pa[current_funkey], +1))
+                redraw = DCFUNPTH;
+            break;
+        case DCMNUPRV:          /* previous menu item assignment */
+            save_shortcut(tree, current_shortcut);
+            for (i = current_shortcut-1; i >= 0; i--)   /* look for next lower */
+                if (shortcut_mapping[i])
+                    break;
+            if (i >= 0)             /* found one */
+            {
+                current_shortcut = i;
+                init_conf_shortcuts(tree, current_shortcut);
+                redraw = DCMNUBOX;
+            }
+            break;
+        case DCMNUNXT:          /* next menu item assignment */
+            save_shortcut(tree, current_shortcut);
+            for (i = current_shortcut+1; i < NUM_SHORTCUTS; i++)    /* look for next higher */
+                if (shortcut_mapping[i])
+                    break;
+            if (i < NUM_SHORTCUTS)  /* found one */
+            {
+                current_shortcut = i;
+                init_conf_shortcuts(tree, current_shortcut);
+                redraw = DCMNUBOX;
+            }
+            break;
+        case DCMNUCLR:          /* clear out all shortcuts */
+            memset(menu_shortcuts, 0x00, NUM_SHORTCUTS);
+            inf_sset(tree, DCMNUKEY, "");
+            redraw = DCMNUBOX;
+            break;
+        case DCOK:
+            save_shortcut(tree, current_shortcut);
+            G.g_appdir = inf_which(tree, DCDEFAPP, 2);
+            G.g_fullpath = inf_which(tree, DCPMFULL, 2);
+            FALLTHROUGH;
+        case DC_CNCL:
+            done = TRUE;
+            break;
+        }
+        tree[exitobj].ob_state &= ~SELECTED;
+        if (done)
+            break;
+        if (redraw >= 0)
+            draw_fld(tree, redraw);
     }
+
+    if (exitobj == DCOK)
+        install_shortcuts();    /* copy array to resource */
+    else
+        recover_shortcuts();    /* copy resource to array */
+
+    end_dialog(tree);
 }
 #endif
 
@@ -967,12 +1271,10 @@ void inf_conf(void)
 WORD opn_appl(char *papname, char *ptail)
 {
     OBJECT *tree;
-    char poname[LEN_ZFNAME];
 
-    tree = G.a_trees[ADOPENAP];
+    tree = desk_rs_trees[ADOPENAP];
 
-    fmt_str(papname, poname);
-    inf_sset(tree, APPLNAME, poname);
+    set_tedinfo_name(tree, APPLNAME, papname);
     inf_sset(tree, APPLPARM, "");
     inf_show(tree, APPLPARM);
 

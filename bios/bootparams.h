@@ -1,7 +1,7 @@
 /*
  * bootparams.h - ramtos boot parameters
  *
- * Copyright (C) 2011-2017 The EmuTOS development team
+ * Copyright (C) 2011-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -12,8 +12,6 @@
 
 #ifndef IDE_H
 #define IDE_H
-
-#include "portab.h"
 
 #ifdef MACHINE_AMIGA
 

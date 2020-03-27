@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -17,10 +17,11 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "aesvars.h"
 #include "obdefs.h"
 #include "gemlib.h"
 
@@ -50,27 +51,6 @@
 #define YFULL   gl_hbox
 #define WFULL   gl_width
 #define HFULL   (gl_height - gl_hbox)
-
-#define WC_BORDER   0           /* for wm_calc() */
-#define WC_WORK     1
-
-#define WF_KIND     1           /* for wm_get(), wm_set() */
-#define WF_NAME     2
-#define WF_INFO     3
-#define WF_WXYWH    4
-#define WF_CXYWH    5
-#define WF_PXYWH    6
-#define WF_FXYWH    7
-#define WF_HSLIDE   8
-#define WF_VSLIDE   9
-#define WF_TOP      10
-#define WF_FIRSTXYWH 11
-#define WF_NEXTXYWH 12
-
-#define WF_NEWDESK  14
-#define WF_HSLSIZ   15
-#define WF_VSLSIZ   16
-#define WF_SCREEN   17
 
 #define DROP_SHADOW_SIZE    2   /* size of drop shadow on windows */
 
@@ -954,7 +934,7 @@ void wm_start(void)
     or_start();
 
     /* init window extent objects */
-    memset(&W_TREE[ROOT], 0, NUM_MWIN * sizeof(OBJECT));
+    bzero(&W_TREE[ROOT], NUM_MWIN * sizeof(OBJECT));
     w_nilit(NUM_MWIN, &W_TREE[ROOT]);
     for (i = 0; i < NUM_MWIN; i++)
     {
@@ -967,7 +947,7 @@ void wm_start(void)
     W_TREE[ROOT].ob_spec = tree->ob_spec;
 
     /* init window element objects */
-    memset(&W_ACTIVE[ROOT], 0, NUM_ELEM * sizeof(OBJECT));
+    bzero(&W_ACTIVE[ROOT], NUM_ELEM * sizeof(OBJECT));
     w_nilit(NUM_ELEM, W_ACTIVE);
     for (i = 0; i < NUM_ELEM; i++)
     {
@@ -1183,7 +1163,7 @@ void wm_set(WORD w_handle, WORD w_field, WORD *pinwds)
     case WF_VSLSIZ:
         if (pinwds[0] == -1)    /* means "use default size" */
             break;
-        /* drop thru */
+        FALLTHROUGH;
     case WF_HSLIDE:
     case WF_VSLIDE:
         if (pinwds[0] < 1)

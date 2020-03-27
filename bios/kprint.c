@@ -1,7 +1,7 @@
 /*
  * kprint.c - our own printf variants (mostly for debug purposes)
  *
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -11,12 +11,11 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
-#include "config.h"
+#include "emutos.h"
+#include "bios.h"
+#include "biosext.h"
 #include <stdarg.h>
 #include "doprintf.h"
-#include "portab.h"
-#include "kprint.h"
 #include "nls.h"
 #include "lineavars.h"
 #include "vt52.h"
@@ -26,11 +25,12 @@
 #include "processor.h"
 #include "chardev.h"
 #include "serport.h"
-#include "pd.h"
 #include "coldfire.h"
 #include "asm.h"
 #include "vectors.h"
 #include "super.h"      /* for Super() and SuperToUser() */
+#include "../bdos/bdosstub.h"
+#include "ikbd.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
@@ -42,7 +42,7 @@
 
 /* external declarations from kprintasm.S */
 
-extern void printout_stonx(const char *str);
+void printout_stonx(const char *str);   /* defined in kprintasm.S */
 
 /* this variable is filled by stonx_kprintf_init() */
 int stonx_kprintf_available;
@@ -553,8 +553,8 @@ void dopanic(const char *fmt, ...)
                  (ULONG)run);
         kcprintf("text=%08lx data=%08lx bss=%08lx\n",
                  (ULONG)run->p_tbase, (ULONG)run->p_dbase, (ULONG)run->p_bbase);
-        if (pc && ((char *)pc >= run->p_tbase) && ((char *)pc < (run->p_tbase + run->p_tlen)))
-            kcprintf("Crash at text+%08lx\n", (char *)pc - run->p_tbase);
+        if (pc && ((UBYTE *)pc >= run->p_tbase) && ((UBYTE *)pc < (run->p_tbase + run->p_tlen)))
+            kcprintf("Crash at text+%08lx\n", (UBYTE *)pc - run->p_tbase);
     }
 
     /* allow interrupts so we get keypresses */

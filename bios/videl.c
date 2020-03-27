@@ -1,7 +1,7 @@
 /*
  * videl.c - Falcon VIDEL support
  *
- * Copyright (C) 2013-2018 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -13,16 +13,16 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "machine.h"
+#include "has.h"
 #include "screen.h"
 #include "videl.h"
+#include "biosext.h"
 #include "asm.h"
 #include "tosvars.h"
 #include "lineavars.h"
 #include "nvram.h"
-#include "kprint.h"
 #include "font.h"
 #include "vt52.h"
 #include "xbiosbind.h"
@@ -463,7 +463,7 @@ static int set_videl_vga(WORD mode)
     videlregs[0x0a] = (mode&VIDEL_PAL) ? 2 : 0; /* video sync to 50Hz if PAL */
 
     /* FIXME: vsync() can't work if the screen is initially turned off */
-    //vsync(); /* wait for vbl so we're not interrupted :-) */
+    //vsync(); /* wait for VBL so we're not interrupted :-) */
 
     videlword(0x82) = p->hht;           /* H hold timer */
     videlword(0x84) = p->hbb;           /* H border begin */

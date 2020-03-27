@@ -1,7 +1,7 @@
 /*
  *  erd: the EmuTOS Resource Decompiler
  *
- *  Copyright 2012-2018 Roger Burrows
+ *  Copyright 2012-2019 Roger Burrows
  *
  *  This program is licensed under the GNU General Public License.
  *  Please see LICENSE.TXT for details.
@@ -520,7 +520,7 @@ LOCAL int num_shared = ARRAY_SIZE(shared);
  */
 LOCAL NOTRANS_ENTRY notrans[] = {
     { 0, 0, "- EmuTOS -" },
-    { 0, 0, "http://" },
+    { 0, 0, "https://" },
     { 0, 0, "640 x " },
     { 0, 0, "640x" },
     { 0, 0, "320 x " },
@@ -534,7 +534,8 @@ LOCAL NOTRANS_ENTRY notrans[] = {
     { 1, 0, "pm" },
     { 1, 0, "Amiga" },
     { 1, 0, "Falcon" },
-    { 1, 0, "ST" }
+    { 1, 0, "ST" },
+    { 1, 0, "F__" }
 };
 LOCAL int num_notrans = ARRAY_SIZE(notrans);
 #endif
@@ -617,7 +618,7 @@ LOCAL int num_notrans = 0;
 /*
  *  other globals
  */
-LOCAL const char *copyright = PROGRAM_NAME " " VERSION " copyright (C) 2012-2018 by Roger Burrows\n"
+LOCAL const char *copyright = PROGRAM_NAME " " VERSION " copyright (C) 2012-2019 by Roger Burrows\n"
 "This program is licensed under the GNU General Public License.\n"
 "Please see LICENSE.TXT for details.\n";
 
@@ -778,6 +779,8 @@ PRIVATE int write_c_file(char *name,char *ext);
 PRIVATE int write_data(FILE *fp,int words,USHORT *data);
 PRIVATE int write_freestr(FILE *fp);
 PRIVATE int write_general_prologue(FILE *fp,char *name,char *ext);
+PRIVATE int write_include_guard_top(FILE *fp,const char *define);
+PRIVATE int write_include_guard_bottom(FILE *fp,const char *define);
 PRIVATE int write_h_file(char *name,char *ext);
 PRIVATE int write_h_define(FILE *fp);
 PRIVATE int write_h_extern(FILE *fp);
@@ -789,6 +792,7 @@ PRIVATE int write_obspec(FILE *fp,OBJECT *obj);
 PRIVATE int write_shared(FILE *fp);
 PRIVATE int write_tedinfo(FILE *fp);
 PRIVATE int write_tree(FILE *fp);
+PRIVATE char *my_strupr(char *string);
 
 
 
@@ -1371,6 +1375,7 @@ PRIVATE int write_h_file(char *name,char *ext)
 {
 FILE *fp;
 char *basename;
+char guard_define[MAX_STRLEN];
 
     fp = openfile(name,ext,"w");
     if (!fp)
@@ -1380,11 +1385,17 @@ char *basename;
     if (!basename)
         basename = name;
     else basename++;
+    sprintf(guard_define, "%s_H", basename);
+    my_strupr(guard_define);
     if (write_general_prologue(fp,basename,"h"))
+        return -1;
+    if (write_include_guard_top(fp,guard_define))
         return -1;
     if (write_h_define(fp))
         return -1;
     if (write_h_extern(fp))
+        return -1;
+    if (write_include_guard_bottom(fp,guard_define))
         return -1;
 
     fclose(fp);
@@ -1418,6 +1429,29 @@ time_t now;
     fprintf(fp," * This software is licenced under the GNU General Public License.\n");
     fprintf(fp," * Please see LICENSE.TXT for further information.\n");
     fprintf(fp," */\n");
+
+    return ferror(fp) ? -1 : 0;
+}
+
+/*
+ *  this creates the start of the include guard at the top of the include file
+ */
+PRIVATE int write_include_guard_top(FILE *fp,const char *define)
+{
+    fprintf(fp,"\n");
+    fprintf(fp,"#ifndef %s\n", define);
+    fprintf(fp,"#define %s\n", define);
+
+    return ferror(fp) ? -1 : 0;
+}
+
+/*
+ *  this creates the end of the include guard at the bottom of the include file
+ */
+PRIVATE int write_include_guard_bottom(FILE *fp,const char *define)
+{
+    fprintf(fp,"\n");
+    fprintf(fp,"#endif /* %s */\n", define);
 
     return ferror(fp) ? -1 : 0;
 }
@@ -1587,15 +1621,14 @@ PRIVATE int write_h_extern(FILE *fp)
  */
 PRIVATE int write_include(FILE *fp,char *name)
 {
-    fprintf(fp,"#include \"config.h\"\n");
+    fprintf(fp,"#include \"emutos.h\"\n");
     fprintf(fp,"#include \"string.h\"\n");
-    fprintf(fp,"#include \"portab.h\"\n");
     fprintf(fp,"#include \"obdefs.h\"\n");
 #ifdef DESK_RSC
     fprintf(fp,"#include \"gemdos.h\"\n");
 #endif
 #ifdef GEM_RSC
-    fprintf(fp,"#include \"../desk/deskmain.h\"\n");
+    fprintf(fp,"#include \"aesext.h\"\n");
     fprintf(fp,"#include \"gemrslib.h\"\n");
 #endif
 #ifdef MFORM_RSC
@@ -2173,8 +2206,8 @@ PRIVATE int write_c_epilogue(FILE *fp)
     fprintf(fp,"    memcpy(%srs_tedinfo, %srs_tedinfo_rom, RS_NTED*sizeof(TEDINFO));\n\n",prefix,prefix);
     fprintf(fp,"    /* translate strings in objects */\n");
     fprintf(fp,"    xlate_obj_array(%srs_obj, RS_NOBS);\n\n",prefix);
-    fprintf(fp,"    /* fix TEDINFO strings */\n");
-    fprintf(fp,"    fix_tedinfo(%srs_tedinfo, RS_NTED);\n\n",prefix);
+    fprintf(fp,"    /* create TEDINFO te_ptext strings */\n");
+    fprintf(fp,"    create_te_ptext(%srs_tedinfo, RS_NTED);\n\n",prefix);
     fprintf(fp,"    /* The first three TEDINFOs don't use a '@' as first character: */\n");
     fprintf(fp,"    *rs_tedinfo[0].te_ptext = '_';\n");
     fprintf(fp,"    *rs_tedinfo[1].te_ptext = '_';\n");
@@ -3076,4 +3109,19 @@ PRIVATE void usage(char *s)
     fprintf(stderr,"usage: %s [-d] [-p<prefix>] [-v] <rsc_file> <c_file>\n",PROGRAM_NAME);
 
     exit(2);
+}
+
+/*
+ *  convert a string to uppercase
+ */
+PRIVATE char *my_strupr(char *string)
+{
+char *p = string;
+
+    while (*p) {
+        *p = toupper(*p);
+        p++;
+    }
+
+    return string;
 }

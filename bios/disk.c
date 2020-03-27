@@ -1,7 +1,7 @@
 /*
  * disk.c - disk routines
  *
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -12,13 +12,11 @@
 
 /*#define ENABLE_KDEBUG*/
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "gemerror.h"
 #include "disk.h"
 #include "asm.h"
 #include "blkdev.h"
-#include "kprint.h"
 #include "xhdi.h"
 #include "processor.h"
 #include "natfeat.h"
@@ -28,12 +26,11 @@
 #include "acsi.h"
 #include "scsi.h"
 #include "sd.h"
+#include "../bdos/bdosstub.h"
 
 /*==== Defines ============================================================*/
 
 #define REMOVABLE_PARTITIONS    1   /* minimum # partitions for removable unit */
-
-extern LONG drvrem;                 /* bitmap of removable media drives */
 
 /*==== Structures =========================================================*/
 typedef struct {
@@ -143,6 +140,11 @@ static void disk_init_one(UWORD unit,LONG *devices_available)
 }
 
 /*
+ **     drvrem - mask of drives with removable media
+ */
+LONG    drvrem;
+
+/*
  * disk_init_all
  *
  * scans all interfaces and adds all found partitions to blkdev and drvbits
@@ -152,10 +154,20 @@ void disk_init_all(void)
 {
     /* scan disk majors in the following order */
     static const int majors[] =
-        {16, 18, 17, 19, 20, 22, 21, 23,    /* IDE primary/secondary */
-         8, 9, 10, 11, 12, 13, 14, 15,      /* SCSI */
-         0, 1, 2, 3, 4, 5, 6, 7,            /* ACSI */
-         24, 25, 26, 27, 28, 29, 30, 31};   /* SD/MMC */
+    {
+#if CONF_WITH_IDE
+        16, 18, 17, 19, 20, 22, 21, 23,     /* IDE primary/secondary */
+#endif
+#if CONF_WITH_SCSI || CONF_WITH_ARANYM
+        8, 9, 10, 11, 12, 13, 14, 15,       /* SCSI */
+#endif
+#if CONF_WITH_ACSI
+        0, 1, 2, 3, 4, 5, 6, 7,             /* ACSI */
+#endif
+#if CONF_WITH_SDMMC
+        24, 25, 26, 27, 28, 29, 30, 31      /* SD/MMC */
+#endif
+    };
     int i;
     LONG devices_available = 0L;
     LONG bitmask;
@@ -535,7 +547,7 @@ static int atari_partition(UWORD unit,LONG *devices_available)
                      * access via XHDI for MiNT's benefit.
                      */
                     KDEBUG((" %s partition: not yet supported\n",(type==0x83)?"Linux":"FAT32"));
-                    /* drop through */
+                    FALLTHROUGH;
                 case 0x01:
                 case 0x04:
                 case 0x06:

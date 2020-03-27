@@ -1,7 +1,7 @@
 /*
  * scsi.c - SCSI routines
  *
- * Copyright (C) 2018 The EmuTOS development team
+ * Copyright (C) 2018-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -36,12 +36,10 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-
+#include "emutos.h"
 #include "scsi.h"
 #include "asm.h"
-#include "biosmem.h"
+#include "biosdefs.h"
 #include "cookie.h"
 #include "delay.h"
 #include "disk.h"
@@ -49,14 +47,13 @@
 #include "gemerror.h"
 #include "intmath.h"                /* for max() */
 #include "machine.h"
+#include "has.h"
 #include "mfp.h"
 #include "nvram.h"
-#include "processor.h"
+#include "biosext.h"    /* for cache control routines */
 #include "string.h"
 #include "tosvars.h"
 #include "vectors.h"
-
-#include "kprint.h"
 
 #if CONF_WITH_SCSI
 
@@ -419,7 +416,7 @@ LONG scsi_rw(UWORD rw, ULONG sector, UWORD count, UBYTE *buf, WORD dev)
 
         p = use_tmpbuf ? tmp_buf : buf;
         if (rw && use_tmpbuf)
-            memcpy(p, buf, (LONG)numsecs * SECTOR_SIZE);
+            memcpy(p, buf, numsecs * SECTOR_SIZE);
 
         for (retry = 0; retry < 2; retry++)
             if ((ret=do_scsi_rw(rw, sector, numsecs, p, dev)) == 0)
@@ -428,10 +425,10 @@ LONG scsi_rw(UWORD rw, ULONG sector, UWORD count, UBYTE *buf, WORD dev)
             break;
 
         if (!rw && use_tmpbuf)
-            memcpy(buf, p, (LONG)numsecs * SECTOR_SIZE);
+            memcpy(buf, p, numsecs * SECTOR_SIZE);
 
         count -= numsecs;
-        buf += (LONG)numsecs * SECTOR_SIZE;
+        buf += numsecs * SECTOR_SIZE;
         sector += numsecs;
     }
 
@@ -1332,11 +1329,11 @@ static LONG decode_scsi_status(WORD dev, LONG ret)
     /*
      * handle check condition: do a request sense & check result
      */
-    memset(cdb, 0x00, 6);
+    bzero(cdb, 6);
     cdb[0] = REQUEST_SENSE;
     cdb[4] = REQSENSE_LENGTH;
 
-    memset(&info, 0x00, sizeof(CMDINFO));
+    bzero(&info, sizeof(CMDINFO));
     info.cdbptr = cdb;
     info.cdblen = 6;
     info.bufptr = reqsense_buffer;
@@ -1373,11 +1370,11 @@ static LONG do_scsi_rw(UWORD rw, ULONG sector, UWORD count, UBYTE *buf, WORD dev
     CMDINFO info;
     LONG ret;
 
-    memset(&info, 0x00, sizeof(CMDINFO));
+    bzero(&info, sizeof(CMDINFO));
     info.cdbptr = cdb;
     info.cdblen = build_rw_command(cdb, rw, sector, count);
     info.bufptr = buf;
-    info.buflen = (LONG)count * SECTOR_SIZE;
+    info.buflen = count * SECTOR_SIZE;
     info.mode = rw ? WRITE_MODE : 0;
 
     /* execute command */
@@ -1392,10 +1389,10 @@ static LONG scsi_capacity(WORD dev, ULONG *buffer)
     CMDINFO info;
     LONG ret;
 
-    memset(cdb, 0x00, 10);      /* build READ CAPACITY command */
+    bzero(cdb, 10);         /* build READ CAPACITY command */
     cdb[0] = READ_CAPACITY;
 
-    memset(&info, 0x00, sizeof(CMDINFO));
+    bzero(&info, sizeof(CMDINFO));
     info.cdbptr = cdb;
     info.cdblen = 10;
     info.bufptr = (void *)buffer;
@@ -1411,11 +1408,11 @@ static LONG scsi_inquiry(WORD dev, UBYTE *buffer)
     CMDINFO info;
     LONG ret;
 
-    memset(cdb, 0x00, 6);       /* build INQUIRY command */
+    bzero(cdb, 6);          /* build INQUIRY command */
     cdb[0] = INQUIRY;
     cdb[4] = INQUIRY_LENGTH;
 
-    memset(&info, 0x00, sizeof(CMDINFO));
+    bzero(&info, sizeof(CMDINFO));
     info.cdbptr = cdb;
     info.cdblen = 6;
     info.bufptr = buffer;

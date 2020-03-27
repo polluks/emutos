@@ -8,8 +8,6 @@ emutos-vampire.rom - English ROM optimized for Vampire V2 accelerators
 emutos-vampire-v4sa.rom - English ROM optimized for Vampire V4 Standalone
 
 The following optional files are also supplied:
-emucurs.rsc - modifiable mouse cursors for the AES/desktop
-emucurs.def - definition file for the above
 emuicon.rsc - contains additional icons for the desktop
 emuicon.def - definition file for the above
 
@@ -38,20 +36,17 @@ EmuTOS for Amiga has been successfully tested on:
 - Amiga 500 with Vampire V2 accelerator board and experimental MapROM feature
 - Vampire V4 Standalone
 
-The (*) in the following lists indicates support disabled by default.
-See below for the details.
-
 Supported Amiga hardware features:
 - Any CPU from 68000 to 68060, including Apollo 68080
 - Chip RAM
-- Monochrome, interlaced 640x400 video mode
+- All kinds of Fast RAM
+- Monochrome video modes up to 640x512 interlaced
 - Keyboard
 - Mouse
-- A600/A1200 IDE interface
+- A600/A1200 IDE interface (including Vampire)
 - Battery backed up clock (MSM6242B and RF5C01A)
-- Zorro II/III Fast RAM, Slow RAM, A3000/A4000 motherboard RAM (*)
-- Vampire V2 FastRAM
 - Floppy drives
+- Vampire V2/V4 SD Card
 
 Supported Atari features:
 - ST-RAM
@@ -75,19 +70,4 @@ make amigavampire
 
 The Vampire V4 Standalone ROM image has been built using:
 make v4sa
-
-(*) This additional hardware support is provided by sources imported
-from the AROS project. Unfortunately, due to AROS and GPL licenses
-incompatibility, this support is disabled in the official EmuTOS
-binaries.
-
-You can enable full AROS support by rebuilding EmuTOS from sources using:
-make amiga AROS=1
-
-Personal usage of the resulting binary will be fully allowed.
-However, due to the licensing issue, redistribution of such binary
-is strictly forbidden.
-
-Note: Alt-RAM support is available without AROS support with the EmuTOS floppy
-for Amiga. See the emutos-amiga-floppy-*.zip archive.
 

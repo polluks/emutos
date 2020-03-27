@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -17,62 +17,13 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "intmath.h"
 #include "obdefs.h"
 #include "optimize.h"
 
 #include "string.h"
 #include "xbiosbind.h"
-
-
-/*
- *  sound() - an internal routine used by the AES and desktop
- *
- *  This routine has two functions:
- *  1. play a sound (iff isfreq==TRUE)
- *      'freq' is the frequency in Hz; must be > 0
- *      'dura' is the duration in ~250msec units: must be < 32
- *  2. enable/disable sound playing by this function (iff isfreq==FALSE)
- *      'freq' is the control:
- *          -1 => do nothing
- *           0 => enable
- *           otherwise disable
- *      'dura' is not used
- *
- *  in both cases, the function returns the current disabled state, as
- *  set previously (0 => enabled, otherwise disabled)
- */
-WORD sound(WORD isfreq, WORD freq, WORD dura)
-{
-    static UBYTE snddat[16];
-    static WORD disabled;
-
-    if (isfreq)     /* Play a sound? */
-    {
-        if (disabled)
-            return 1;
-
-        snddat[0] = 0;  snddat[1] = divu(125000L,freq);     /* channel A pitch lo */
-        snddat[2] = 1;  snddat[3] = divu(125000L,freq) >> 8;/* channel A pitch hi */
-        snddat[4] = 7;  snddat[5] = 0xFE;
-        snddat[6] = 8;  snddat[7] = 0x10;                   /* amplitude: envelop */
-        snddat[8] = 11;  snddat[9] = 0;                     /* envelope lo */
-        snddat[10] = 12;  snddat[11] = dura * 8;            /* envelope hi */
-        snddat[12] = 13;  snddat[13] = 9;                   /* envelope type */
-        snddat[14] = 0xFF;  snddat[15] = 0;
-
-        Dosound((LONG)snddat);
-    }
-    else            /* else enable/disable sound */
-    {
-        if (freq != -1)
-            disabled = freq;
-    }
-
-    return disabled;
-}
 
 
 /*
@@ -231,14 +182,16 @@ static UBYTE hex_dig(char achar)
 
 
 /*
- *  Starting at the specified position within a string, skip over any
- *  leading spaces.  If the next non-space byte is '\r', stop scanning,
- *  set the scanned value to zero, and return a pointer to the '\r'.
+ *  Convert a 2-digit hex character string to a WORD value
  *
- *  Otherwise, convert the next two characters (assumed to be hex digits)
- *  into a value N.  If N is 0xff, set the scanned value to -1; otherwise
- *  set the scanned value to N.  In either case, return a pointer to the
- *  byte immediately following the two hex characters.
+ *  Leading spaces are skipped and the next character is examined.  If
+ *  it is a '\r', a value of 0 is returned.  Otherwise the next two
+ *  characters (assumed to be hex digits) are returned as a WORD value.
+ *  As a special case, a string of 0xff is converted to -1 (for
+ *  reference, this is used in the assignment of a_aicon/a_dicon).
+ *
+ *  The returned pointer points to the '\r' or after the hex digits,
+ *  as applicable.
  */
 char *scan_2(char *pcurr, WORD *pwd)
 {
@@ -257,6 +210,22 @@ char *scan_2(char *pcurr, WORD *pwd)
 
     *pwd = temp;
     return pcurr;
+}
+
+
+/*
+ * return pointer to start of last segment of path
+ * (assumed to be the filename)
+ */
+char *filename_start(char *path)
+{
+    char *start = path;
+
+    while (*path)
+        if (*path++ == '\\')
+            start = path;
+
+    return start;
 }
 
 
@@ -299,28 +268,4 @@ WORD i;
     }
 
     return (*pattern == *filename);
-}
-
-
-/*
- *  Inserts character 'chr' into the string pointed to 'str', at
- *  position 'pos' (positions are relative to the start of the
- *  string; inserting at position 0 means inserting at the start
- *  of the string).  'tot_len' gives the maximum length the string
- *  can grow to; if necessary, the string will be truncated after
- *  inserting the character.
- */
-void ins_char(char *str, WORD pos, char chr, WORD tot_len)
-{
-    WORD ii, len;
-
-    len = strlen(str);
-
-    for (ii = len; ii > pos; ii--)
-        str[ii] = str[ii-1];
-    str[ii] = chr;
-    if (len+1 < tot_len)
-        str[len+1] = '\0';
-    else
-        str[tot_len-1] = '\0';
 }

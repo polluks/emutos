@@ -1,7 +1,7 @@
 /*
  * screen.h - low-level screen routines
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -14,25 +14,7 @@
 #ifndef VIDEL_H
 #define VIDEL_H
 
-/* bit settings for Falcon videomodes */
-#define VIDEL_VALID    0x01ff           /* the only bits allowed in a videomode */
-#define VIDEL_VERTICAL 0x0100           /* if set, use interlace (TV), double line (VGA) */
-#define VIDEL_COMPAT   0x0080           /* ST-compatible if set */
-#define VIDEL_OVERSCAN 0x0040           /* overscan if set (not used with VGA) */
-#define VIDEL_PAL      0x0020           /* PAL if set; otherwise NTSC */
-#define VIDEL_VGA      0x0010           /* VGA if set; otherwise TV */
-#define VIDEL_80COL    0x0008           /* 80-column mode if set; otherwise 40 */
-#define VIDEL_BPPMASK  0x0007           /* mask for bits/pixel encoding */
-#define VIDEL_1BPP          0               /* 2 colours */
-#define VIDEL_2BPP          1               /* 4 colours */
-#define VIDEL_4BPP          2               /* 16 colours */
-#define VIDEL_8BPP          3               /* 256 colours */
-#define VIDEL_TRUECOLOR     4               /* 65536 colours */
-
 #if CONF_WITH_VIDEL
-
-#include "portab.h"
-#include "tosvars.h"
 
 #define SPSHIFT             0xffff8266L
 
@@ -90,7 +72,6 @@ WORD vsetrgb(WORD index,WORD count,const ULONG *rgb);
 WORD vgetrgb(WORD index,WORD count,ULONG *rgb);
 
 /* misc routines */
-WORD get_videl_mode(void);
 WORD vfixmode(WORD mode);
 WORD videl_check_moderez(WORD moderez);
 void videl_get_current_mode_info(UWORD *planes, UWORD *hz_rez, UWORD *vt_rez);

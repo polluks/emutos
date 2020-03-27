@@ -1,7 +1,7 @@
 /*
  * blitter.h - header for blitter routines
  *
- * Copyright (C) 2017-2018 The EmuTOS development team
+ * Copyright (C) 2017-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -32,13 +32,17 @@ typedef struct
     WORD            dst_x_incr;         /* destination X increment */
     WORD            dst_y_incr;         /* destination Y increment */
     volatile UWORD  *dst_addr;          /* destination address */
-    volatile WORD   x_count;            /* X count */
-    volatile WORD   y_count;            /* Y count */
+    volatile UWORD  x_count;            /* X count */
+    volatile UWORD  y_count;            /* Y count */
     UBYTE           hop;                /* HOP */
     UBYTE           op;                 /* OP */
     volatile UBYTE  status;             /* status bits & line# */
     UBYTE           skew;               /* FXSR, NFSR, & skew */
 } BLIT;
+
+#endif
+
+/* the following are used by the blitter and the blitter emulation code */
 
 /*
  * values for hop
@@ -55,6 +59,12 @@ typedef struct
 #define HOG         0x40
 #define SMUDGE      0x20
 #define LINENO      0x0f
-#endif
+
+/*
+ * values for skew
+ */
+#define FXSR    0x80
+#define NFSR    0x40
+#define SKEW    0x0f
 
 #endif

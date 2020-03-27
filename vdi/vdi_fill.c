@@ -3,46 +3,43 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2018 The EmuTOS development team
+ * Copyright 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+/* #define ENABLE_KDEBUG */
+
+#include "emutos.h"
 #include "asm.h"
 #include "intmath.h"
+#include "aesext.h"
 #include "vdi_defs.h"
-#include "../bios/tosvars.h"
-#include "../bios/lineavars.h"
-
-#define EMPTY   0xffff
-#define DOWN_FLAG 0x8000
-#define QSIZE 200
-#define QMAX QSIZE-1
+#include "vdistub.h"
+#include "tosvars.h"
+#include "lineavars.h"
 
 
-#define ABS(v) (v & 0x7FFF)
-
-
-/* prototypes */
-static void crunch_queue(void);
-static BOOL clipbox(const VwkClip * clip, Rect * rect);
-
-
+/* special values used in y member of SEGMENT */
+#define EMPTY       0xffff          /* this entry is unused */
+#define DOWN_FLAG   0x8000
+#define ABS(v)      ((v) & 0x7FFF)  /* strips DOWN_FLAG if present */
 
 /* Global variables */
-static UWORD search_color;       /* the color of the border      */
+static UWORD search_color;      /* selected colour for contourfill() */
+static BOOL seed_type;          /* 1 => fill until selected colour is NOT found */
+                                /* 0 => fill until selected colour is found */
 
+/* the following point to segments within vdishare.queue[] (see below) */
+static SEGMENT *qbottom;        /* the bottom of the queue      */
+static SEGMENT *qtop;           /* the last segment in use +1   */
+static SEGMENT *qptr;           /* points to the active point   */
 
-/* some kind of stack for the segments to fill */
-static WORD queue[QSIZE];       /* storage for the seed points  */
-static WORD qbottom;            /* the bottom of the queue (zero)   */
-static WORD qtop;               /* points to seed +3            */
-static WORD qptr;               /* points to the active point   */
-static WORD qtmp;
-static WORD qhole;              /* an empty space in the queue */
+/*
+ * a shared area for the VDI
+ */
+VDISHARE vdishare;
 
 
 /* the storage for the used defined fill pattern */
@@ -195,7 +192,7 @@ void vdi_vsf_style(Vwk * vwk)
     CONTRL[4] = 1;
     fi = INTIN[0];
 
-    if (vwk->fill_style == PATTERN_FILL_STYLE) {
+    if (vwk->fill_style == FIS_PATTERN) {
         if ((fi > MAX_FILL_PATTERN) || (fi < MIN_FILL_PATTERN))
             fi = DEF_FILL_PATTERN;
     } else {
@@ -234,6 +231,65 @@ void vdi_vsf_perimeter(Vwk * vwk)
     }
     CONTRL[4] = 1;
 }
+
+
+
+/*
+ * clipbox - Just clips and copies the inputs for use by "rectfill"
+ *
+ * input:
+ *     clip->xmn_clip = x clipping minimum.
+ *         ->xmx_clip = x clipping maximum.
+ *         ->ymn_clip = y clipping minimum.
+ *         ->ymx_clip = y clipping maximum.
+ *     rect->x1       = x coord of upper left corner.
+ *         ->y1       = y coord of upper left corner.
+ *         ->x2       = x coord of lower right corner.
+ *         ->y2       = y coord of lower right corner.
+ *
+ * output:
+ *     FALSE -> everything clipped
+ *     rect->x1 = x coord of upper left corner.
+ *         ->y1 = y coord of upper left corner.
+ *         ->x2 = x coord of lower right corner.
+ *         ->y2 = y coord of lower right corner.
+ */
+static BOOL clipbox(const VwkClip *clip, Rect *rect)
+{
+    WORD x1, y1, x2, y2;
+
+    x1 = rect->x1;
+    y1 = rect->y1;
+    x2 = rect->x2;
+    y2 = rect->y2;
+
+    /* clip x coordinates */
+    if (x1 < clip->xmn_clip) {
+        if (x2 < clip->xmn_clip)
+            return FALSE;           /* clipped box is null */
+        rect->x1 = clip->xmn_clip;
+    }
+    if (x2 > clip->xmx_clip) {
+        if (x1 > clip->xmx_clip)
+            return FALSE;           /* clipped box is null */
+        rect->x2 = clip->xmx_clip;
+    }
+
+    /* clip y coordinates */
+    if (y1 < clip->ymn_clip) {
+        if (y2 < clip->ymn_clip)
+            return FALSE;           /* clipped box is null */
+        rect->y1 = clip->ymn_clip;
+    }
+    if (y2 > clip->ymx_clip) {
+        if (y1 > clip->ymx_clip)
+            return FALSE;           /* clipped box is null */
+        rect->y2 = clip->ymx_clip;
+    }
+
+    return TRUE;
+}
+
 
 
 /*
@@ -295,15 +351,15 @@ st_fl_ptr(Vwk * vwk)
     fi = vwk->fill_index;
     pm = 0;
     switch (vwk->fill_style) {
-    case 0:
+    case FIS_HOLLOW:
         pp = &HOLLOW;
         break;
 
-    case 1:
+    case FIS_SOLID:
         pp = &SOLID;
         break;
 
-    case 2:
+    case FIS_PATTERN:
         if (fi < 8) {
             pm = DITHRMSK;
             pp = &DITHER[fi * (pm + 1)];
@@ -312,7 +368,7 @@ st_fl_ptr(Vwk * vwk)
             pp = &OEMPAT[(fi - 8) * (pm + 1)];
         }
         break;
-    case 3:
+    case FIS_HATCH:
         if (fi < 6) {
             pm = HAT_0_MSK;
             pp = &HATCH0[fi * (pm + 1)];
@@ -321,7 +377,7 @@ st_fl_ptr(Vwk * vwk)
             pp = &HATCH1[(fi - 6) * (pm + 1)];
         }
         break;
-    case 4:
+    case FIS_USER:
         pm = 0x000f;
         pp = (UWORD *)&vwk->ud_patrn[0];
         break;
@@ -380,20 +436,17 @@ bub_sort (WORD * buf, WORD count)
  * DRI code, when clc_flit() was written in assembler; the buffer
  * was moved to the stack when clc_flit() was re-implemented in C.
  */
-#define MAX_INTERSECTIONS   256
-static WORD fill_buffer[MAX_INTERSECTIONS];
 
 void
 clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, WORD y, int vectors)
 {
-//    WORD fill_buffer[256];      /* must be 256 words or it will fail */
     WORD * bufptr;              /* point to array of x-values. */
     int intersections;          /* count of intersections */
     int i;
 
     /* Initialize the pointers and counters. */
     intersections = 0;  /* reset counter */
-    bufptr = fill_buffer;
+    bufptr = vdishare.main.fill_buffer;
 
     /* find intersection points of scan line with poly edges. */
     for (i = 0; i < vectors; i++) {
@@ -425,7 +478,7 @@ clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, 
                 x1 = point[i].x;        /* fetch x-value of 1st endpoint. */
                 x2 = point[i+1].x;      /* fetch x-value of 2nd endpoint. */
                 dx = (x2 - x1) << 1;    /* so we can round by adding 1 below */
-                if (intersections >= MAX_INTERSECTIONS)
+                if (intersections >= MAX_VERTICES)
                     break;
                 intersections++;
                 /* fill edge buffer with x-values */
@@ -454,29 +507,30 @@ clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, 
 
     /* bubblesort the intersections, if it makes sense */
     if ( intersections > 1 )
-        bub_sort(fill_buffer, intersections);
+        bub_sort(vdishare.main.fill_buffer, intersections);
+
+    /*
+     * Testing under Atari TOS shows that the fill area always *includes*
+     * the left & right perimeter (for those functions that allow the
+     * perimeter to be drawn separately, it is drawn on top of the edge
+     * pixels).  We now conform to Atari TOS.
+     */
 
     if (attr->clip) {
-        /* Clipping is in force.  Once the endpoints of the line segment have */
-        /* been adjusted for the border, clip them to the left and right sides */
-        /* of the clipping rectangle. */
-
-        /* The x-coordinates of each line segment are adjusted so that the */
-        /* border of the figure will not be drawn with the fill pattern. */
+        /*
+         * Clipping is in force.  Clip the endpoints of the line segment
+         * to the left and right sides of the clipping rectangle.
+         */
 
         /* loop through buffered points */
-        WORD * ptr = fill_buffer;
+        WORD * ptr = vdishare.main.fill_buffer;
         for (i = intersections / 2 - 1; i >= 0; i--) {
             WORD x1, x2;
             Rect rect;
 
-            /* grab a pair of adjusted intersections */
-            x1 = *ptr++ + 1;
-            x2 = *ptr++ - 1;
-
-            /* do nothing, if starting point greater than ending point */
-            if ( x1 > x2 )
-                continue;
+            /* grab a pair of endpoints */
+            x1 = *ptr++;
+            x2 = *ptr++;
 
             if ( x1 < clipper->xmn_clip ) {
                 if ( x2 < clipper->xmn_clip )
@@ -501,33 +555,19 @@ clc_flit (const VwkAttrib * attr, const VwkClip * clipper, const Point * point, 
     else {
         /* Clipping is not in force.  Draw from point to point. */
 
-        /* This code has been modified from the version in the screen driver. */
-        /* The x-coordinates of each line segment are adjusted so that the */
-        /* border of the figure will not be drawn with the fill pattern.  If */
-        /* the starting point is greater than the ending point then nothing is */
-        /* done. */
-
         /* loop through buffered points */
-        WORD * ptr = fill_buffer;
+        WORD * ptr = vdishare.main.fill_buffer;
         for (i = intersections / 2 - 1; i >= 0; i--) {
-            WORD x1, x2;
             Rect rect;
 
-            /* grab a pair of adjusted endpoints */
-            x1 = *ptr++ + 1 ;   /* word */
-            x2 = *ptr++ - 1 ;   /* word */
+            /* grab a pair of endpoints */
+            rect.x1 = *ptr++;
+            rect.y1 = y;
+            rect.x2 = *ptr++;
+            rect.y2 = y;
 
-            /* If starting point greater than ending point, nothing is done. */
-            /* is start still to left of end? */
-            if ( x1 <= x2 ) {
-                rect.x1 = x1;
-                rect.y1 = y;
-                rect.x2 = x2;
-                rect.y2 = y;
-
-                /* rectangle fill routine draws horizontal line */
-                draw_rect_common(attr, &rect);
-            }
+            /* rectangle fill routine draws horizontal line */
+            draw_rect_common(attr, &rect);
         }
     }
 }
@@ -546,8 +586,6 @@ polygon(Vwk * vwk, Point * ptsin, int count)
     const VwkClip *clipper;
     VwkAttrib attr;
 
-    LSTLIN = FALSE;
-
     /* find out the total min and max y values */
     point = ptsin;
     fill_maxy = fill_miny = point->y;
@@ -565,21 +603,13 @@ polygon(Vwk * vwk, Point * ptsin, int count)
     /* cast structure needed by clc_flit */
     clipper = VDI_CLIP(vwk);
     if (vwk->clip) {
-        if (fill_miny < clipper->ymn_clip) {
-            if (fill_maxy >= clipper->ymn_clip) {
-                /* polygon starts before clip */
-                fill_miny = clipper->ymn_clip - 1;       /* polygon partial overlap */
-                if (fill_miny < 1)
-                    fill_miny = 1;
-            } else
-                return;         /* polygon entirely before clip */
-        }
-        if (fill_maxy > clipper->ymx_clip) {
-            if (fill_miny <= clipper->ymx_clip)  /* polygon ends after clip */
-                fill_maxy = clipper->ymx_clip;   /* polygon partial overlap */
-            else
-                return;         /* polygon entirely after clip */
-        }
+        if ((fill_maxy < clipper->ymn_clip)     /* polygon entirely before clip */
+         || (fill_miny > clipper->ymx_clip))    /* polygon entirely after clip */
+            return;
+        if (fill_miny < clipper->ymn_clip)
+            fill_miny = clipper->ymn_clip - 1;  /* polygon partial overlap */
+        if (fill_maxy > clipper->ymx_clip)
+            fill_maxy = clipper->ymx_clip;      /* polygon partial overlap */
     }
 
     /* close the polygon, connect last and first point */
@@ -620,65 +650,6 @@ void vdi_v_fillarea(Vwk * vwk)
 #endif
 #endif
         polygon(vwk, point, count);
-}
-
-
-
-/*
- * clipbox - Just clips and copies the inputs for use by "rectfill"
- *
- * input:
- *     clip->xmn_clip = x clipping minimum.
- *         ->xmx_clip = x clipping maximum.
- *         ->ymn_clip = y clipping minimum.
- *         ->ymx_clip = y clipping maximum.
- *     rect->x1       = x coord of upper left corner.
- *         ->y1       = y coord of upper left corner.
- *         ->x2       = x coord of lower right corner.
- *         ->y2       = y coord of lower right corner.
- *
- * output:
- *     FALSE -> everything clipped
- *     rect->x1 = x coord of upper left corner.
- *         ->y1 = y coord of upper left corner.
- *         ->x2 = x coord of lower right corner.
- *         ->y2 = y coord of lower right corner.
- */
-static BOOL
-clipbox(const VwkClip * clip, Rect * rect)
-{
-    WORD x1, y1, x2, y2;
-
-    x1 = rect->x1;
-    y1 = rect->y1;
-    x2 = rect->x2;
-    y2 = rect->y2;
-
-    /* clip x coordinates */
-    if (x1 < clip->xmn_clip) {
-        if (x2 < clip->xmn_clip)
-            return FALSE;           /* clipped box is null */
-        rect->x1 = clip->xmn_clip;
-    }
-    if (x2 > clip->xmx_clip) {
-        if (x1 > clip->xmx_clip)
-            return FALSE;           /* clipped box is null */
-        rect->x2 = clip->xmx_clip;
-    }
-
-    /* clip y coordinates */
-    if (y1 < clip->ymn_clip) {
-        if (y2 < clip->ymn_clip)
-            return FALSE;           /* clipped box is null */
-        rect->y1 = clip->ymn_clip;
-    }
-    if (y2 > clip->ymx_clip) {
-        if (y1 > clip->ymx_clip)
-            return FALSE;           /* clipped box is null */
-        rect->y2 = clip->ymx_clip;
-    }
-
-    return TRUE;
 }
 
 
@@ -784,23 +755,20 @@ search_to_left (const VwkClip * clip, WORD x, UWORD mask, const UWORD search_col
 
 /*
  * end_pts - find the endpoints of a section of solid color
- *           (for the _seed_fill routine.)
+ *           (for the contourfill() routine.)
  *
- * input:  4(sp) = xstart.
- *         6(sp) = ystart.
- *         8(sp) = ptr to endxleft.
- *         C(sp) = ptr to endxright.
+ * input:   clip        ptr to clipping rectangle
+ *          x           starting x value
+ *          y           y coordinate of line
  *
- * output: endxleft  := left endpoint of solid color.
- *         endxright := right endpoint of solid color.
- *         d0        := success flag.
- *             0 => no endpoints or xstart on edge.
- *             1 => endpoints found.
- *         seed_type  indicates the type of fill
+ * output:  xleftout    ptr to variable to receive leftmost point of this colour
+ *          xrightout   ptr to variable to receive rightmost point of this colour
+ *
+ * returns success flag:
+ *          0 => no endpoints or starting x value on edge
+ *          1 => endpoints found
  */
-static WORD
-end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
-        BOOL seed_type)
+static WORD end_pts(const VwkClip *clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout)
 {
     UWORD color;
     UWORD * addr;
@@ -828,11 +796,79 @@ end_pts(const VwkClip * clip, WORD x, WORD y, WORD *xleftout, WORD *xrightout,
 }
 
 
-/* Prototypes local to this module */
-static WORD
-get_seed(const VwkAttrib * attr, const VwkClip * clip,
-         WORD xin, WORD yin, WORD *xleftout, WORD *xrightout,
-         BOOL seed_type);
+
+/*
+ * crunch_queue - move qtop down to remove unused seeds
+ */
+static void crunch_queue(void)
+{
+    while (((qtop-1)->y == EMPTY) && (qtop > qbottom))
+        qtop--;
+    if (qptr >= qtop)
+        qptr = qbottom;
+}
+
+
+
+/*
+ * get_seed - put seeds into Q, if (xin,yin) is not of search_color
+ */
+static WORD get_seed(const VwkAttrib *attr, const VwkClip *clip,
+                        WORD xin, WORD yin, WORD *xleftout, WORD *xrightout)
+{
+    SEGMENT *qhole;         /* an empty space in the queue */
+    SEGMENT *qtmp;
+
+    if (end_pts(clip, xin, ABS(yin), xleftout, xrightout)) {
+        /* false if of search_color */
+        for (qtmp = qbottom, qhole = NULL; qtmp < qtop; qtmp++) {
+            /* skip holes, remembering the first hole we find */
+            if (qtmp->y == EMPTY)
+            {
+                if (qhole == NULL)
+                    qhole = qtmp;
+                continue;
+            }
+            /* see, if we ran into another seed */
+            if ( ((qtmp->y ^ DOWN_FLAG) == yin) && (qtmp->xleft == *xleftout) )
+            {
+                /* we ran into another seed so remove it and fill the line */
+                Rect rect;
+
+                rect.x1 = *xleftout;
+                rect.y1 = ABS(yin);
+                rect.x2 = *xrightout;
+                rect.y2 = ABS(yin);
+
+                /* rectangle fill routine draws horizontal line */
+                draw_rect_common(attr, &rect);
+
+                qtmp->y = EMPTY;
+                if ((qtmp+1) == qtop)
+                    crunch_queue();
+                return 0;
+            }
+        }
+
+        /*
+         * there were no holes, so raise qtop if we can
+         */
+        if (qhole == NULL) {
+            if (++qtop > vdishare.queue+QSIZE) { /* can't raise qtop ... */
+                KDEBUG(("contourfill(): queue overflow\n"));
+                return -1;      /* error */
+            }
+        } else
+            qtmp = qhole;
+
+        qtmp->y = yin;      /* put the y and endpoints in the Q */
+        qtmp->xleft = *xleftout;
+        qtmp->xright = *xrightout;
+        return 1;           /* we put a seed in the Q */
+    }
+
+    return 0;           /* we didn't put a seed in the Q */
+}
 
 
 
@@ -847,9 +883,9 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
     WORD xleft;                 /* temporary endpoints          */
     WORD xright;                /* */
     WORD direction;             /* is next scan line up or down */
-    BOOL notdone;               /* does seedpoint==search_color */
-    BOOL gotseed;               /* a seed was put in the Q      */
-    BOOL seed_type;             /* indicates the type of fill */
+    WORD gotseed;               /* 1 => seed was put in the Q */
+                                /* 0 => no seed was put in the Q */
+                                /* -1 => queue overflowed */
 
     xleft = PTSIN[0];
     oldy = PTSIN[1];
@@ -879,148 +915,81 @@ void contourfill(const VwkAttrib * attr, const VwkClip *clip)
         seed_type = 0;
     }
 
-    /* Initialize the line drawing parameters */
-    LSTLIN = FALSE;
+    /* check if anything to do */
+    if (!end_pts(clip, xleft, oldy, &oldxleft, &oldxright))
+        return;
 
-    notdone = end_pts(clip, xleft, oldy, &oldxleft, &oldxright, seed_type);
+    /*
+     * from this point on we must NOT access PTSIN[], since the area
+     * is overwritten by the queue of seeds!
+     */
+    qptr = qbottom = vdishare.queue;
+    qptr->y = (oldy | DOWN_FLAG);   /* stuff a point going down into the Q */
+    qptr->xleft = oldxleft;
+    qptr->xright = oldxright;
+    qtop = qptr + 1;                /* one above highest seed point */
 
-    qptr = qbottom = 0;
-    qtop = 3;                   /* one above highest seed point */
-    queue[0] = (oldy | DOWN_FLAG);
-    queue[1] = oldxleft;
-    queue[2] = oldxright;           /* stuff a point going down into the Q */
+    while (1) {
+        Rect rect;
 
-    if (notdone) {
-        /* couldn't get point out of Q or draw it */
-        while (1) {
-            Rect rect;
+        direction = (oldy & DOWN_FLAG) ? 1 : -1;
+        gotseed = get_seed(attr, clip, oldxleft, oldy+direction, &newxleft, &newxright);
+        if (gotseed < 0)
+            return;         /* error, quit */
 
-            direction = (oldy & DOWN_FLAG) ? 1 : -1;
-            gotseed = get_seed(attr, clip, oldxleft, (oldy + direction),
-                               &newxleft, &newxright, seed_type);
-
-            if ((newxleft < (oldxleft - 1)) && gotseed) {
-                xleft = oldxleft;
-                while (xleft > newxleft) {
-                    --xleft;
-                    get_seed(attr, clip, xleft, oldy ^ DOWN_FLAG,
-                             &xleft, &xright, seed_type);
-                }
+        if ((newxleft < (oldxleft - 1)) && gotseed) {
+            xleft = oldxleft;
+            while (xleft > newxleft) {
+                --xleft;
+                if (get_seed(attr, clip, xleft, oldy^DOWN_FLAG, &xleft, &xright) < 0)
+                    return; /* error, quit */
             }
-            while (newxright < oldxright) {
-                ++newxright;
-                gotseed = get_seed(attr, clip, newxright, oldy + direction,
-                                   &xleft, &newxright, seed_type);
-            }
-            if ((newxright > (oldxright + 1)) && gotseed) {
-                xright = oldxright;
-                while (xright < newxright) {
-                    ++xright;
-                    get_seed(attr, clip, xright, oldy ^ DOWN_FLAG,
-                             &xleft, &xright, seed_type);
-                }
-            }
-
-            /* Eventually jump out here */
-            if (qtop == qbottom)
-                break;
-
-            while (queue[qptr] == EMPTY) {
-                qptr += 3;
-                if (qptr == qtop)
-                    qptr = qbottom;
-            }
-
-            oldy = queue[qptr];
-            queue[qptr++] = EMPTY;
-            oldxleft = queue[qptr++];
-            oldxright = queue[qptr++];
-            if (qptr == qtop)
-                crunch_queue();
-
-            rect.x1 = oldxleft;
-            rect.y1 = ABS(oldy);
-            rect.x2 = oldxright;
-            rect.y2 = ABS(oldy);
-
-            /* rectangle fill routine draws horizontal line */
-            draw_rect_common(attr, &rect);
-
-            /* after every line, check for early abort */
-            if ((*SEEDABORT)())
-                break;
         }
+        while (newxright < oldxright) {
+            ++newxright;
+            gotseed = get_seed(attr, clip, newxright, oldy+direction, &xleft, &newxright);
+            if (gotseed < 0)
+                return;     /* error, quit */
+        }
+        if ((newxright > (oldxright + 1)) && gotseed) {
+            xright = oldxright;
+            while (xright < newxright) {
+                ++xright;
+                if (get_seed(attr, clip, xright, oldy^DOWN_FLAG, &xleft, &xright) < 0)
+                    return; /* error, quit */
+            }
+        }
+
+        /* Eventually jump out here */
+        if (qtop == qbottom)
+            break;
+
+        while (qptr->y == EMPTY) {
+            qptr++;
+            if (qptr == qtop)
+                qptr = qbottom;
+        }
+
+        oldy = qptr->y;
+        oldxleft = qptr->xleft;
+        oldxright = qptr->xright;
+        qptr->y = EMPTY;
+        if (++qptr == qtop)
+            crunch_queue();
+
+        rect.x1 = oldxleft;
+        rect.y1 = ABS(oldy);
+        rect.x2 = oldxright;
+        rect.y2 = ABS(oldy);
+
+        /* rectangle fill routine draws horizontal line */
+        draw_rect_common(attr, &rect);
+
+        /* after every line, check for early abort */
+        if ((*SEEDABORT)())
+            break;
     }
 }                               /* end of fill() */
-
-
-
-/*
- * crunch_queue - move qtop down to remove unused seeds
- */
-static void
-crunch_queue(void)
-{
-    while ((queue[qtop - 3] == EMPTY) && (qtop > qbottom))
-        qtop -= 3;
-    if (qptr >= qtop)
-        qptr = qbottom;
-}
-
-
-
-/*
- * get_seed - put seeds into Q, if (xin,yin) is not of search_color
- */
-static WORD
-get_seed(const VwkAttrib * attr, const VwkClip * clip,
-         WORD xin, WORD yin, WORD *xleftout, WORD *xrightout,
-         BOOL seed_type)
-{
-    if (end_pts(clip, xin, ABS(yin), xleftout, xrightout, seed_type)) {
-        /* false if of search_color */
-        for (qtmp = qbottom, qhole = EMPTY; qtmp < qtop; qtmp += 3) {
-            /* see, if we ran into another seed */
-            if ( ((queue[qtmp] ^ DOWN_FLAG) == yin) && (queue[qtmp] != EMPTY) &&
-                (queue[qtmp + 1] == *xleftout) )
-
-            {
-                /* we ran into another seed so remove it and fill the line */
-                Rect rect;
-
-                rect.x1 = *xleftout;
-                rect.y1 = ABS(yin);
-                rect.x2 = *xrightout;
-                rect.y2 = ABS(yin);
-
-                /* rectangle fill routine draws horizontal line */
-                draw_rect_common(attr, &rect);
-
-                queue[qtmp] = EMPTY;
-                if ((qtmp + 3) == qtop)
-                    crunch_queue();
-                return 0;
-            }
-            if ((queue[qtmp] == EMPTY) && (qhole == EMPTY))
-                qhole = qtmp;
-        }
-
-        if (qhole == EMPTY) {
-            if ((qtop += 3) > QMAX) {
-                qtmp = qbottom;
-                qtop -= 3;
-            }
-        } else
-            qtmp = qhole;
-
-        queue[qtmp++] = yin;    /* put the y and endpoints in the Q */
-        queue[qtmp++] = *xleftout;
-        queue[qtmp] = *xrightout;
-        return 1;             /* we put a seed in the Q */
-    }
-
-    return 0;           /* we didn't put a seed in the Q */
-}
 
 
 

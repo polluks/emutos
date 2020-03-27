@@ -2,7 +2,7 @@
  * vt52.c - vt52 like screen handling routines
  *
  *
- * Copyright (C) 2013-2018 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  * Copyright (C) 2004 Martin Doering
  *
  * Authors:
@@ -11,8 +11,8 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "config.h"
-#include "portab.h"
+
+#include "emutos.h"
 #include "lineavars.h"
 #include "font.h"
 #include "tosvars.h"            /* for save_row */

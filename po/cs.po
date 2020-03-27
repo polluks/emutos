@@ -26,7 +26,7 @@ msgstr "Disky GEMDOSu"
 msgid "MB"
 msgstr "MB"
 
-#: bios/initinfo.c
+#: bios/initinfo.c desk/deskinf.c
 msgid "KB"
 msgstr "KB"
 
@@ -110,7 +110,7 @@ msgid "[1]["
 "physically write-protected.][Cancel|Retry]"
 msgstr "[1]["
 "Disk v jednotce %c: je|"
-"fyzicky chránìn proti zápisu.][Zru¹it|Znovu]"
+"fyzicky chránìn proti zápisu.][Zru¹it|Opakovat]"
 
 #: aes/gem_rsc.c
 msgid "[2]["
@@ -120,7 +120,7 @@ msgid "[2]["
 msgstr "[2]["
 "Jednotka %c: nereaguje.|"
 "Prosím zkontrolujte jednotku,|"
-"nebo zasuòte disk.][Zru¹it|Znovu]"
+"nebo zasuòte disk.][Zru¹it|Opakovat]"
 
 #: aes/gem_rsc.c
 msgid "[1]["
@@ -128,7 +128,7 @@ msgid "[1]["
 "may be damaged.][Cancel|Retry]"
 msgstr "[1]["
 "Data na disku v jednotce %c:|"
-"mohou být po¹kozena.][Zru¹it|Znovu]"
+"mohou být po¹kozena.][Zru¹it|Opakovat]"
 
 #: aes/gem_rsc.c
 msgid "[2]["
@@ -136,7 +136,7 @@ msgid "[2]["
 "data on the disk in drive %c:.][Cancel|Retry]"
 msgstr "[2]["
 "Aplikace nemù¾e pøeèíst|"
-"data na disku v jednotce %c:.][Zru¹it|Znovu]"
+"data na disku v jednotce %c:.][Zru¹it|Opakovat]"
 
 #: aes/gem_rsc.c
 msgid "[1]["
@@ -144,7 +144,7 @@ msgid "[1]["
 "receiving data.][Cancel|Retry]"
 msgstr "[1]["
 "Výstupní zaøízení|"
-"nepøijímá data.][Zru¹it|Znovu]"
+"nepøijímá data.][Zru¹it|Opakovat]"
 
 #: aes/gem_rsc.c
 msgid "[3]["
@@ -326,6 +326,10 @@ msgid "Copy's name: ________.___"
 msgstr "Jméno kopie: ________.___"
 
 #: desk/desk_rsc.c
+msgid "Free memory: ___________________"
+msgstr "Volná pamì»: ___________________"
+
+#: desk/desk_rsc.c
 msgid "Label: ________.___"
 msgstr "Jmenovka: ________.___"
 
@@ -350,44 +354,44 @@ msgid "  Desktop info..."
 msgstr "  Info o desktopu..."
 
 #: desk/desk_rsc.c
-msgid "  Open            ^O"
-msgstr "  Otevøít         ^O"
+msgid "  Open"
+msgstr "  Otevøít"
 
 #: desk/desk_rsc.c
-msgid "  Info/Rename...  ^I"
-msgstr "  Info/Jméno...   ^I"
+msgid "  Info/Rename..."
+msgstr "  Info/Jméno..."
 
 #: desk/desk_rsc.c
-msgid "  New Folder...   ^N"
-msgstr "  Nový adresáø... ^N"
+msgid "  New folder..."
+msgstr "  Nový adresáø..."
 
 #: desk/desk_rsc.c
-msgid "  Close           ^U"
-msgstr "  Zavøít          ^U"
+msgid "  Close"
+msgstr "  Zavøít"
 
 #: desk/desk_rsc.c
-msgid "  Close window    ^W"
-msgstr "  Zavøít okno     ^W"
+msgid "  Close window"
+msgstr "  Zavøít okno"
 
 #: desk/desk_rsc.c
 msgid "  Set file mask..."
 msgstr "  Nastavit masku..."
 
 #: desk/desk_rsc.c
-msgid "  Delete...       ^D"
-msgstr "  Smazat...       ^D"
+msgid "  Delete..."
+msgstr "  Smazat..."
 
 #: desk/desk_rsc.c
 msgid "  Format..."
 msgstr "  Formátovat..."
 
 #: desk/desk_rsc.c
-msgid "  Execute EmuCON  ^Z"
-msgstr "  Spustit EmuCON  ^Z"
+msgid "  Execute EmuCON"
+msgstr "  Spustit EmuCON"
 
 #: desk/desk_rsc.c
-msgid "  Shutdown        ^Q"
-msgstr "  Vypnout         ^Q"
+msgid "  Shutdown"
+msgstr "  Vypnout"
 
 #: desk/desk_rsc.c
 msgid "  Show as icons"
@@ -446,20 +450,20 @@ msgid "  Desktop configuration..."
 msgstr "  Konfigurace desktopu..."
 
 #: desk/desk_rsc.c
-msgid "  Change resolution...  ^R"
-msgstr "  Zmìnit rozli¹ení...    ^R"
+msgid "  Change resolution..."
+msgstr "  Zmìnit rozli¹ení..."
 
 #: desk/desk_rsc.c
-msgid "  Save desktop...       ^S"
-msgstr "  Ulo¾it desktop...      ^S"
+msgid "  Read .INF file..."
+msgstr "  Naèíst .INF soubor..."
+
+#: desk/desk_rsc.c
+msgid "  Save desktop..."
+msgstr "  Ulo¾it desktop..."
 
 #: desk/desk_rsc.c
 msgid "  Blitter"
 msgstr "  Blitter"
-
-#: desk/desk_rsc.c
-msgid "Attribute:"
-msgstr "Atributy:"
 
 #: desk/desk_rsc.c
 msgid "Read/Write"
@@ -598,6 +602,10 @@ msgid "NEW FOLDER"
 msgstr "NOVÝ ADRESÁØ"
 
 #: desk/desk_rsc.c
+msgid "PRINT FILE"
+msgstr "VYTISKNOUT SOUBOR"
+
+#: desk/desk_rsc.c
 msgid "SET PREFERENCES"
 msgstr "NASTAVENÍ"
 
@@ -688,6 +696,10 @@ msgstr "Výchozí adresáø:"
 #: desk/desk_rsc.c
 msgid "Input parameter:"
 msgstr "Parametr:"
+
+#: desk/desk_rsc.c
+msgid "Function keys:"
+msgstr "Funkèní klávesy:"
 
 #: desk/desk_rsc.c
 msgid "SET SCREEN RESOLUTION"
@@ -818,6 +830,10 @@ msgid "TRASH"
 msgstr "KO©"
 
 #: desk/desk_rsc.c
+msgid "PRINTER"
+msgstr "TISKÁRNA"
+
+#: desk/desk_rsc.c
 msgid "-More-"
 msgstr "-Pokraèování-"
 
@@ -834,6 +850,10 @@ msgid "Locate item"
 msgstr "Vyhledat polo¾ku"
 
 #: desk/desk_rsc.c
+msgid "Select .INF file"
+msgstr "Vyberte .INF soubor"
+
+#: desk/desk_rsc.c
 msgid "[2]["
 "Switch resolution?][ Yes | No ]"
 msgstr "[2]["
@@ -841,9 +861,16 @@ msgstr "[2]["
 
 #: desk/desk_rsc.c
 msgid "[2]["
-"Show this document?][Show|Cancel]"
+"Show or print this document?][Show|Print|Cancel]"
 msgstr "[2]["
-"Zobrazit dokumet?][Zobrazit|Zru¹it]"
+"Zobrazit nebo vytisknout|"
+"tento dokument?][Zobrazit|Vytisknout|Zru¹it]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Print error!][ Retry | Cancel ]"
+msgstr "[1]["
+"Chyba tisku!][ Opakovat | Zru¹it ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -908,7 +935,7 @@ msgid "[2]["
 msgstr "[2]["
 "Nelze vytvoøit adresáø|"
 "s tímto jménem. Prosím zadejte|"
-"jiné jméno, nebo zru¹te.][Zru¹it|Znovu]"
+"jiné jméno, nebo zru¹te.][Zru¹it|Opakovat]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -950,6 +977,14 @@ msgstr "[1]["
 "%s se pou¾ívá pro|"
 "trvalé smazání souborù|"
 "nebo adresáøù.][  OK  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"%s|"
+"is a printer.][  OK  ]"
+msgstr "[1]["
+"%s|"
+"je tiskárna.][  OK  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1125,6 +1160,12 @@ msgstr "[1]["
 "Selhalo nastavení|"
 "výchozího adresáøe.][  OK  ]"
 
+#: desk/desk_rsc.c
+msgid "[1]["
+"Illegal .INF file format.][  OK  ]"
+msgstr "[1]["
+"Neplatný formát souboru .INF.][  OK  ]"
+
 #: cli/cmdint.c
 msgid "Copy <filespec> ... to standard output"
 msgstr "Copy <filespec> ... to standard output"
@@ -1278,8 +1319,8 @@ msgid "left/right arrow = previous/next character"
 msgstr "left/right arrow = previous/next character"
 
 #: cli/cmdint.c
-msgid "shift-left/right arrow = previous/next word"
-msgstr "shift-left/right arrow = previous/next word"
+msgid "control-left/right arrow = previous/next word"
+msgstr "control-left/right arrow = previous/next word"
 
 #: cli/cmdint.c
 msgid "invalid mode argument"

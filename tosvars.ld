@@ -11,7 +11,7 @@
  * The TOS system variables have been officially documented by Atari.
  * They have fixed addresses in the 0x380-0x800 region, so they are only
  * accessible in supervisor mode.
- * Documentation: http://toshyp.atari.org/en/003004.html
+ * Documentation: https://freemint.github.io/tos.hyp/en/bios_sysvars.html
  */
 
 /*
@@ -83,8 +83,8 @@ the_env         = 0x4be;        /* pointer to default environment string */
 _drvbits        = 0x4c2;        /* bit allocation for physical drives */
 _dskbufp        = 0x4c6;        /* pointer to disk buffer */
 _autopath       = 0x4ca;        /* pointer to auto-execute path */
-_vbl_list       = 0x4ce;        /* pointers to 8 VBl routines */
-_dumpflg        = 0x4ee;        /* flag for screen dump (unsused) */
+_vbl_list       = 0x4ce;        /* pointers to 8 VBL routines */
+_dumpflg        = 0x4ee;        /* flag for screen dump */
 _prtabt         = 0x4f0;        /* printer abort flag */
 _sysbase        = 0x4f2;        /* pointer to start of OS */
 _shell_p        = 0x4f6;        /* pointer to shell */

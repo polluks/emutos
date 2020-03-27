@@ -1,7 +1,7 @@
 /*
  * clock.c - BIOS time and date routines
  *
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD   Martin Doering
@@ -15,9 +15,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "clock.h"
 #include "ikbd.h"
 #include "mfp.h"
@@ -26,10 +24,13 @@
 #include "vectors.h"
 #include "nvram.h"
 #include "machine.h"
+#include "has.h"
 #include "cookie.h"
 #include "asm.h"
 #include "dma.h"
 #include "delay.h"
+#include "bios.h"
+#include "../bdos/bdosstub.h"
 #ifdef MACHINE_AMIGA
 #include "amiga.h"
 #endif
@@ -67,7 +68,7 @@ struct hms
 /*
  * extract year/month/day from GEMDOS-style date
  *
- * note: extracted year is raw, i.e. relative to 1980 
+ * note: extracted year is raw, i.e. relative to 1980
  */
 static void extract_date(struct ymd *out, UWORD date)
 {
@@ -1123,8 +1124,6 @@ void clock_init(void)
 }
 
 /* xbios functions */
-
-extern UWORD current_time, current_date; /* From bdos/time.c */
 
 void settime(LONG time)
 {

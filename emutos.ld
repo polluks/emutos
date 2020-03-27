@@ -1,7 +1,7 @@
 /*
  * emutos.ld - Custom linker script for EmuTOS ROM
  *
- * Copyright (C) 2016-2018 The EmuTOS development team
+ * Copyright (C) 2016-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -16,6 +16,8 @@
 
 /* Create a plain binary file, without any header */
 OUTPUT_FORMAT(binary)
+
+#if !EMUTOS_LIVES_IN_RAM
 
 /* The ROM address depends on the target */
 #if defined (MACHINE_AMIGA)
@@ -34,33 +36,36 @@ OUTPUT_FORMAT(binary)
  */
 #define ROM_LENGTH 1M /* Maximum size before I/O area */
 
+#endif /* !EMUTOS_LIVES_IN_RAM */
+
 /* Memory regions of a typical Atari computer.
  * Only start addresses matter. Lengths just need to be large enough.
  */
 MEMORY
 {
     stram : ORIGIN = 0x00000000, LENGTH = 14M
+#if !EMUTOS_LIVES_IN_RAM
     rom : ORIGIN = ROM_ORIGIN, LENGTH = ROM_LENGTH
-#ifdef STATIC_ALT_RAM_ADDRESS
+#endif
+#if CONF_WITH_STATIC_ALT_RAM
     altram : ORIGIN = STATIC_ALT_RAM_ADDRESS, LENGTH = 1M
 #endif
 }
 
 /* Region used as read/write memory */
 #if CONF_WITH_STATIC_ALT_RAM
-# define REGION_RAM altram
+REGION_ALIAS("REGION_RAM", altram)
 #else
-# define REGION_RAM stram
+REGION_ALIAS("REGION_RAM", stram)
 #endif
 
 /* Regions used by EmuTOS sections */
 #if EMUTOS_LIVES_IN_RAM
-# define REGION_READ_ONLY   REGION_RAM
-# define REGION_READ_WRITE  REGION_RAM
+REGION_ALIAS("REGION_READ_ONLY", REGION_RAM)
 #else
-# define REGION_READ_ONLY   rom
-# define REGION_READ_WRITE  REGION_RAM
+REGION_ALIAS("REGION_READ_ONLY", rom)
 #endif
+REGION_ALIAS("REGION_READ_WRITE", REGION_RAM)
 
 SECTIONS
 {

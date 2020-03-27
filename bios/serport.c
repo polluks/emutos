@@ -3,7 +3,7 @@
  *
  * This file exists to centralise the handling of serial port hardware.
  *
- * Copyright (C) 2013-2018 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -11,13 +11,14 @@
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
-#include "config.h"
-#include "portab.h"
+
+#include "emutos.h"
 #include "asm.h"
 #include "chardev.h"
 #include "cookie.h"
 #include "delay.h"
 #include "machine.h"
+#include "has.h"
 #include "mfp.h"
 #include "scc.h"
 #include "serport.h"
@@ -645,6 +646,9 @@ static ULONG rsconf_dummy(WORD baud, WORD ctrl, WORD ucr, WORD rsr, WORD tsr, WO
 
 /*
  * initialise the Bconmap() structures
+ *
+ * note: using IS_ARANYM below rather than (cookie_mch==MCH_ARANYM) avoids
+ * producing unnecessary code for non-ARAnyM images
  */
 static void init_bconmap(void)
 {
@@ -656,7 +660,7 @@ static void init_bconmap(void)
         memcpy(&maptable[i],&maptable_dummy,sizeof(MAPTAB));
     bconmap_root.maptab = maptable;
     bconmap_root.maptabsize = 1;
-    bconmap_root.mapped_device = (cookie_mch==MCH_FALCON) ? 7 : 6;
+    bconmap_root.mapped_device = (cookie_mch==MCH_FALCON || IS_ARANYM) ? 7 : 6;
 
     /*
      * initialise the BCONMAP structure according to machine type first
@@ -664,7 +668,7 @@ static void init_bconmap(void)
      */
     memcpy(&maptable[0],&maptable_mfp,sizeof(MAPTAB));
 
-    if ((cookie_mch == MCH_FALCON) || (cookie_mch == MCH_MSTE)) {
+    if ((cookie_mch == MCH_FALCON) || (cookie_mch == MCH_MSTE) || IS_ARANYM) {
 #if CONF_WITH_SCC
         if (has_scc) {
             memcpy(&maptable[1],&maptable_port_b,sizeof(MAPTAB));

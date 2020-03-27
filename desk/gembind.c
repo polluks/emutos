@@ -5,7 +5,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2017 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -20,12 +20,11 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "obdefs.h"
+#include "aesdefs.h"
 #include "gembind.h"
 #include "aesbind.h"
-#include "kprint.h"
 #include <stdarg.h>
 
 
@@ -498,6 +497,20 @@ WORD form_alert(WORD defbut, const char *astring)
     return gem_if(AES_CTRL_CODE(FORM_ALERT, 1, 1, 1));
 }
 
+
+#if CONF_WITH_SHOW_FILE || CONF_WITH_PRINTER_ICON
+/*
+ * save some space in the 192K ROMs, since this AES call
+ * is (currently) only used by 'Show file' & the printer icon handler
+ */
+WORD form_error(WORD errnum)
+{
+    FM_ERRNUM = errnum;
+    return gem_if(AES_CTRL_CODE(FORM_ERROR, 1, 0, 0));
+}
+#endif
+
+
 WORD form_center(OBJECT *tree, WORD *pcx, WORD *pcy, WORD *pcw, WORD *pch)
 {
     FM_FORM = (LONG)tree;
@@ -704,7 +717,7 @@ WORD fsel_input(char *pipath, char *pisel, WORD *pbutton)
 */
 
 
-#if CONF_WITH_DESKTOP_SHORTCUTS
+#if CONF_WITH_DESKTOP_SHORTCUTS || CONF_WITH_READ_INF
 WORD fsel_exinput(char *pipath, char *pisel, WORD *pbutton, const char *title)
 {
     FS_IPATH = (LONG)pipath;
@@ -830,12 +843,14 @@ WORD wind_calc(WORD wctype, UWORD kind, WORD x, WORD y, WORD w, WORD h,
     return (WORD)RET_CODE;
 }
 
-/* unused
+
+#if CONF_WITH_READ_INF
 WORD wind_new(void)
 {
     return gem_if(AES_CTRL_CODE(WIND_NEW, 0, 1, 0));
 }
-*/
+#endif
+
 
 /*
  *  Resource Manager

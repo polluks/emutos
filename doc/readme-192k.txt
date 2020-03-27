@@ -8,6 +8,7 @@ These ROMs are suitable for the following hardware:
 Unlike other ROM versions, they do NOT autodetect extra hardware, and might not
 work on machines with additional hardware. For example, they don't work under
 the Hatari emulator's Falcon emulation due to missing VIDEL support.
+Also, they only work with plain 68000 CPU.
 
 Each ROM contains a single language:
 
@@ -18,6 +19,7 @@ etos192fi.img - Finnish (PAL)
 etos192fr.img - French (PAL)
 etos192gr.img - Greek (PAL)
 etos192it.img - Italian (PAL)
+etos192nl.img - Dutch (PAL)
 etos192no.img - Norwegian (PAL)
 etos192ru.img - Russian (PAL)
 etos192se.img - Swedish (PAL)
@@ -26,8 +28,6 @@ etos192us.img - English (NTSC)
 etos192uk.img - English (PAL)
 
 The following optional files are also supplied:
-emucurs.rsc - modifiable mouse cursors for the AES/desktop
-emucurs.def - definition file for the above
 emuicon.rsc - contains additional icons for the desktop
 emuicon.def - definition file for the above
 
@@ -37,10 +37,10 @@ versions of the Atari TOS desktop.
 Note that selecting Norwegian/Swedish currently sets the language to English,
 but the keyboard layout to Norwegian/Swedish.
 
-Due to size limitations, the 192 KB ROMs contains:
+Due to size limitations, the 192 KB ROMs contain:
 - no EmuCON
-
-Since EmuTOS 0.9.1, the 192 KB ROMs contain the same desktop as other variants.
+- limited desktop features (comparable to Atari TOS 1)
+- no builtin text file viewer and print function
 
 These ROM images have been built using:
 make all192

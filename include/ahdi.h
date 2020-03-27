@@ -4,7 +4,7 @@
  * This file exists to allow AHDI stuff to be referenced by both
  * the BDOS and the BIOS.
  *
- * Copyright (C) 2014-2015 The EmuTOS development team
+ * Copyright (C) 2014-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -15,9 +15,6 @@
 
 #ifndef _AHDI_H
 #define _AHDI_H
-
-#include "portab.h"
-
 
 typedef struct
 {

@@ -2,7 +2,7 @@
  * fs.h - file system defines
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2017 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * Authors:
  *  JSL   Jason S. Loveman
@@ -22,13 +22,8 @@
 #define FS_H
 
 #include "biosdefs.h"
-#include "pd.h"
+#include "bdosdefs.h"
 
-/*
- *  fix conditionals
- */
-
-#define M0101052901     1
 
 /*
  *  constants
@@ -36,19 +31,20 @@
 
 #define SLASH '\\'
 
-#define SUPSIZ 1024     /* common supervisor stack size (in words) */
-#define OPNFILES 40     /* max open files in system */
-#define NCURDIR 40      /* max current directories in use in system */
-#define NUMSTD 6        /* number of standard files */
-#define NUMHANDLES      (NUMSTD+OPNFILES)
-#define KBBUFSZ 128     /* size of typeahead buffer -- must be power of 2!! */
-#define KBBUFMASK       (KBBUFSZ-1)
-
 /*
- *  code macros
+ * the following values are used by Atari TOS:
+ *              Typeahead bufsize   Number of open files
+ *  TOS 1.04            80                  75
+ *  TOS 2.06            80                  75
+ *  TOS 3.06            80                  75
+ *  TOS 4.04            63                  19 [likely a per-process number]
  */
-
-#define min(a,b) (((a) < (b)) ? (a) : (b))
+#define SUPSIZ      1024            /* common supervisor stack size (in words) */
+#define OPNFILES    75              /* max open files in system */
+#define NCURDIR     40              /* max current directories in use in system */
+#define NUMHANDLES  (NUMSTD+OPNFILES)
+#define KBBUFSZ     64              /* size of typeahead buffer -- must be power of 2!! */
+#define KBBUFMASK   (KBBUFSZ-1)
 
 /*
  *  Error handling
@@ -168,21 +164,14 @@ struct _ofd
 typedef struct
 {
     char f_name[11];
-    char f_attrib;
-    char f_fill[10];
+    UBYTE f_attrib;
+    UBYTE f_fill[10];
     DOSTIME f_td;           /* time, date */
     CLNO f_clust;
     long f_fileln;
 } FCB;
 
-#define ERASE_MARKER    0xe5    /* in f_name[0], indicates erased file */
-
-#define FA_RO           0x01
-#define FA_HIDDEN       0x02
-#define FA_SYSTEM       0x04
-#define FA_VOL          0x08
-#define FA_SUBDIR       0x10
-#define FA_ARCHIVE      0x20
+#define ERASE_MARKER    '\xe5'  /* in f_name[0], indicates erased file */
 
 #define FA_NORM         (FA_ARCHIVE|FA_SYSTEM|FA_HIDDEN|FA_RO)
 #define FA_LFN          0x0f
@@ -198,7 +187,7 @@ typedef struct
 struct _dnd         /* directory node descriptor */
 {
     char d_name[11];    /*  directory name                      */
-    char d_fill;        /*  attributes?                         */
+    UBYTE d_fill;       /*  attributes?                         */
     UWORD d_flag;
     CLNO d_strtcl;      /*  starting cluster number of dir      */
 
@@ -287,7 +276,7 @@ struct _bcb
     UBYTE   b_buftyp;   /*  buffer type                 */
     UBYTE   b_dirty;    /*  true if buffer dirty        */
     DMD     *b_dm;      /*  ptr to drive media block    */
-    char    *b_bufr;    /*  pointer to buffer (API)     */
+    UBYTE   *b_bufr;    /*  pointer to buffer (API)     */
 } ;
 
 /*
@@ -342,7 +331,6 @@ extern  DIRTBL_ENTRY dirtbl[];
 extern  DMD     *drvtbl[];
 extern  LONG    drvsel;
 extern  FTAB    sft[];
-extern  BCB     *bufl[2];              /*  in bios main.c              */
 
 
 
@@ -376,8 +364,8 @@ long xdup(int h);
  */
 
 /* create file with specified name, attributes */
-long xcreat(char *name, char attr);
-long ixcreat(char *name, char attr);
+long xcreat(char *name, UBYTE attr);
+long ixcreat(char *name, UBYTE attr);
 
 /* open a file (path name) */
 long xopen(char *name, int mod);
@@ -402,7 +390,7 @@ void bufl_init(void);
 /* ??? */
 void flush(BCB *b);
 /* return the ptr to the buffer containing the desired record */
-char *getrec(RECNO recn, OFD *of, int wrtflg);
+UBYTE *getrec(RECNO recn, OFD *of, int wrtflg);
 BCB *getbcb(DMD *dmd,WORD buftype,RECNO recnum);
 
 /*
@@ -439,7 +427,7 @@ long ixwrite(OFD *p, long len, void *ubufr);
 
 long xmkdir(char *s);
 long xrmdir(char *p);
-long xchmod(char *p, int wrt, char mod);
+long xchmod(char *p, int wrt, UBYTE mod);
 long ixsfirst(char *name, WORD att, DTAINFO *addr);
 long xsfirst(char *name, int att);
 long xsnext(void);

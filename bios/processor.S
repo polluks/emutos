@@ -1,7 +1,7 @@
 /*
  * processor.S - Detect and set CPU and FPU type
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  * Copyright (C) 1999, 2002 by Authors
  *
  * Authors:
@@ -15,10 +15,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 
-
 #include "asmdefs.h"
-
-
 
 /* References */
 
@@ -32,14 +29,16 @@
 #if CONF_WITH_APOLLO_68080
         .globl  _is_apollo_68080
 #endif
+#if CONF_WITH_CACHE_CONTROL
+        .globl  _cache_exists
+        .globl  _set_cache
+#endif
 
         .extern _longframe              // If not 0, use long stack frames
         .extern _setup_68030_pmmu
 #if CONF_WITH_68030_PMMU
         .extern _pmmutree
 #endif
-
-
 
         .text
 
@@ -101,22 +100,19 @@ _detect_cpu:
         moveq   #30,d0          // no fault -> this is a 68030
         jra     exit
 
-// 68040 or 68060
+// 68040 or 68060 (or Apollo 68080)
 
 x040:   moveq   #40,d0          // assume 68040
         MOVEC_PCR_D1            // attempt to access the PCR
+        moveq   #60,d0          // no fault, assume 68060
 
 #if CONF_WITH_APOLLO_68080
-        moveq   #60,d0          // assume 68060
         ADDIWL_0_A0             // check for addiw.l instruction
-
 // Apollo 68080
-        moveq   #40,d0          // force 68040 detection
+        moveq   #40,d0          // no fault, force 68040 detection
         move.w  #1,_is_apollo_68080
-        jra     exit
 #endif
-x060:
-        moveq   #60,d0          // no fault -> this is 68060
+
 exit:
         move.l  a3,(0xf4).w     // restore stuff and exit
         move.l  a2,(0x2c).w
@@ -128,8 +124,6 @@ exit:
         moveq   #0,d0           // say it's a 68000
 #endif /* CONF_WITH_ADVANCED_CPU */
         rts
-
-
 
 /*
  * _detect_fpu - FPU type detection, experimental (draco@atari.org).
@@ -164,7 +158,6 @@ exit:
  * I am very interested if this will really work on everything =)
  * On a 68030/68882 tandem it does.
  */
-
 _detect_fpu:
 #if CONF_WITH_ADVANCED_CPU
         movem.l d2/a2,-(sp)
@@ -252,16 +245,11 @@ nosfp:  move.l  a1,(0x08).w     // restore bus error
 
 #endif /* __mcoldfire__ */
 
-
-
 /*
  * void processor_init(void) - sets mcpu and fputype.
  */
-
 _processor_init:
-#ifdef __mcoldfire__
-        // On ColdFire, the caches are enabled by the pre-OS
-#else
+#ifndef __mcoldfire__           // On ColdFire, the caches are enabled by the pre-OS
         jbsr    _detect_cpu
         swap    d0
         move.w  d0,_mcpu_subtype    // save processor subtype
@@ -271,12 +259,19 @@ _processor_init:
 #if CONF_WITH_ADVANCED_CPU
         jeq     m68000
 
-
         move.w  #1,_longframe.w // this is a 68010 or later
 m68000:
         jbsr    _detect_fpu
         move.l  d0,_fputype
 
+        cmpi.b  #20,_mcpu+3
+        jne     pi_chk030
+
+// We're running on a 68020
+        move.l  #0x00000009,d0  // clear & enable cache
+        jra     init_cacr
+
+pi_chk030:
         cmpi.b  #30,_mcpu+3
         jne     pi_chk040
 
@@ -287,42 +282,36 @@ m68000:
 // User would like a PMMU tree, so see if it's possible
 
         tst.w   _mcpu_subtype   // check for full 68030
-        jeq     m68030
-
-// On a 68ec030, we enable just the instruction cache, since we can't
-// set up a proper PMMU tree to avoid caching the I/O address area
-
-        move.l  #0x00000011,d0  // set IBE and EI only
-        jra     init_cacr
+        jne     m68ec030
 
 // On a full 68030, if a PMMU tree is wanted, we must set it up before
 // enabling the data cache.  The PMMU tree will ensure that caching is
 // inhibited for access to i/o addresses.
 
-m68030:
         jsr     _setup_68030_pmmu
         PMOVE_TO_CRP(root_pointer_descriptor)   // tell system where tree is
         PMOVE_TO_TC(init_tc)        // enable PMMU
         PMOVE_TO_TTR0(init_ttr0)    // override PMMU tree for accesses to
         PMOVE_TO_TTR1(init_ttr1)    //   0x01000000-0xfeffffff (see below for details)
-        move.l  #0x00003111,d0  // we set WA, DBE, ED, IBE and EI
-#else
+        move.l  #0x00003919,d0      // we set WA, DBE, CD/ED, IBE and CI/EI
+        jra     init_cacr
 
-// A PMMU tree isn't wanted, so we avoid caching problems by only
-// enabling the instruction cache.
+m68ec030:
 
-        move.l  #0x00000011,d0  // we set IBE and EI only
 #endif
 
-init_cacr:
-        MOVEC_D0_CACR
-        jra     pi_done
+// If user doesn't want a PMMU tree, or we're on a 68ec030, we enable
+// just the instruction cache, since we can't set up a proper PMMU
+// tree to avoid caching the I/O address area
+
+        move.l  #0x00000019,d0  // set IBE and CI/EI only
+        jra     init_cacr
 
 pi_chk040:
         move.l  #0x80008000,d1  // set 040 CACR value: DE and IE
         cmpi.b  #40,_mcpu+3
         jeq     m68040
-        move.l  #0x80808000,d1  // set 060 CACR value: EDC, EBC and EIC
+        move.l  #0x80c08000,d1  // set 060 CACR value: EDC, EBC/CABC and EIC
         cmpi.b  #60,_mcpu+3
         jeq     m68060
         jra     pi_done
@@ -364,12 +353,17 @@ m68060:
         CINVA_BC                // invalidate the caches
         nop
         move.l  d1,d0           // recover the enable value
-        MOVEC_D0_CACR           // enable the caches
 
-#endif /* __mcoldfire__ */
+init_cacr:
+#if CONF_WITH_CACHE_CONTROL
+        move.l  d0,cacr_enable  // save value to use when enabling caches
+#endif
+        MOVEC_D0_CACR
 
 pi_done:
 #endif /* CONF_WITH_ADVANCED_CPU */
+
+#endif /* not __mcoldfire__ */
         rts
 
 /*
@@ -384,13 +378,12 @@ pi_done:
  * we don't do that on ColdFire, because ColdFire executables are brand new
  * and supposed to be aware of cache issues.
  */
-
 _instruction_cache_kludge:
 #ifdef __mcoldfire__
         rts
 #endif
 //
-// for 680x0, we drop into invalidate_instruction_cache
+// for 680x0, we fall through invalidate_instruction_cache
 //
 
 /*
@@ -409,8 +402,12 @@ _invalidate_instruction_cache:
         jra     cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
+        cmpi.b  #20,_mcpu+3
+        jeq     ii_020or030
         cmpi.b  #30,_mcpu+3
         jne     ii_not30
+
+ii_020or030:
         MOVEC_CACR_D0                   // get current cacr
         ori.b   #0x08,d0                // set the CI bit
         MOVEC_D0_CACR                   // clear the whole i-cache
@@ -442,7 +439,6 @@ ii_done:
  *   copyback:
  *     we must push the data cache (the backing memory may be stale)
  */
-
 _flush_data_cache:
 #ifdef __mcoldfire__
         lea     cpushl_dc,a1    // flush/invalidate data cache
@@ -460,7 +456,6 @@ _flush_data_cache:
         rts
 #endif
 
-
 /*
  * void invalidate_data_cache(void *start, long size)
  *
@@ -472,7 +467,7 @@ _flush_data_cache:
 _invalidate_data_cache:
 #ifdef __mcoldfire__
         lea     cpushl_dc,a1    // flush/invalidate data cache
-        // drop into cpushl_loop
+        // fall through cpushl_loop
 #else
 #if CONF_WITH_ADVANCED_CPU
         cmpi.b  #30,_mcpu+3
@@ -551,7 +546,44 @@ cpushl_dc:
 cpushl_bc:
         cpushl  bc,(a0)         // both caches
         rts
+#endif
 
+
+#if CONF_WITH_CACHE_CONTROL
+/*
+ * C A C H E   C O N T R O L   F O R   E M U D E S K
+ *
+ * WORD cache_exists(void);
+ *  returns 1 if processor has cache, 0 otherwise
+ *
+ * void set_cache(WORD enable);
+ *  sets cache state: if 'enable' is zero, disables, otherwise enables
+ */
+_cache_exists:
+        moveq.l #0,d0               // assume 68000, 68010
+        cmpi.b  #20,_mcpu+3
+        jmi     ce_exit
+        moveq.l #1,d0
+ce_exit:
+        rts
+
+_set_cache:
+        jbsr    _cache_exists
+        tst.w   d0
+        jeq     sc_exit             // no cache, do nothing
+        moveq.l #0,d0               // assume disable
+        tst.w   4(sp)
+        jeq     sc_cacr             // it is, go do it
+        move.l  cacr_enable,d0      // enabling: set processor-appropriate value
+        cmpi.b  #40,_mcpu+3         // 040/060 ?
+        jmi     sc_cacr             // no, just go set cacr
+        nop
+        CINVA_BC                    // 040/060: invalidate the caches first
+        nop
+sc_cacr:
+        MOVEC_D0_CACR
+sc_exit:
+        rts
 #endif
 
         SECTION_RODATA
@@ -582,4 +614,8 @@ temp:           .ds.l   1
 
 #if CONF_WITH_APOLLO_68080
 _is_apollo_68080:   .ds.w   1
+#endif
+
+#if CONF_WITH_CACHE_CONTROL
+cacr_enable:    .ds.l   1
 #endif

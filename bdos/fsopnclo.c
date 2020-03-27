@@ -2,7 +2,7 @@
  * fsopnclo.c - open/close/create/delete routines for file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2018 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -46,8 +46,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
 #include "fs.h"
 #include "gemerror.h"
@@ -55,7 +54,8 @@
 #include "mem.h"
 #include "time.h"
 #include "console.h"
-#include "kprint.h"
+#include "bdosstub.h"
+#include "tosvars.h"
 
 /* the following characters are disallowed in the name when creating
  * or renaming files or folders.  this is *mostly* the same list as
@@ -81,7 +81,7 @@ static void sftdel(FTAB *sftp);
  *
  *  Error returns   EPTHNF, EACCDN, ENHNDL
  */
-long xcreat(char *name, char attr)
+long xcreat(char *name, UBYTE attr)
 {
     return ixcreat(name, attr & ~FA_SUBDIR);
 }
@@ -93,7 +93,7 @@ long xcreat(char *name, char attr)
 /*  name: path name of file
  *  attr: atttributes
  */
-long ixcreat(char *name, char attr)
+long ixcreat(char *name, UBYTE attr)
 {
     DND *dn;
     OFD *fd;
@@ -103,7 +103,7 @@ long ixcreat(char *name, char attr)
     int i, f2;                              /*  M01.01.03   */
     long pos, rc;
 
-    n[0] = (char)ERASE_MARKER; n[1] = 0;
+    n[0] = ERASE_MARKER; n[1] = 0;
 
     /* first find path */
 
@@ -610,7 +610,7 @@ long ixdel(DND *dn, FCB *f, long pos)
      */
     fd = dn->d_ofd;
     ixlseek(fd,pos);
-    c = (char)ERASE_MARKER;
+    c = ERASE_MARKER;
     ixwrite(fd,1L,&c);
     ixclose(fd,CL_DIR);
 

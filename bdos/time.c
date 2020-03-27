@@ -2,7 +2,7 @@
  * time.c - GEMDOS time and date functions
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2018 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -40,12 +40,12 @@ NAMES
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
+#include "emutos.h"
 #include "time.h"
-#include "portab.h"
 #include "gemerror.h"
 #include "xbiosbind.h"
-#include "kprint.h"
+#include "bdosstub.h"
+#include "tosvars.h"
 
 /*
  * globals: current time and date
@@ -78,17 +78,14 @@ UWORD current_time, current_date;
  * I didn't put it in a header because only this file is interested.
  */
 
-/* the address of the vector in TOS vars */
-extern void (*etv_timer)(int);
-
 /*
  * private declarations
  */
 
 static void tikfrk(int n);
 
-static const char nday_norm[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-static const char nday_leap[] = {0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+static const UBYTE nday_norm[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+static const UBYTE nday_leap[] = {0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 /* static long uptime; */
 
@@ -111,7 +108,7 @@ long xgetdate(void)
 long xsetdate(UWORD d)
 {
     UWORD curmo, day;
-    const char *nday = IS_A_LEAP_YEAR(d) ? nday_leap : nday_norm;
+    const UBYTE *nday = IS_A_LEAP_YEAR(d) ? nday_leap : nday_norm;
 
     curmo = (d & MTH_BM) >> MTH_SHIFT;
     day = d & DAY_BM;
@@ -178,7 +175,7 @@ void time_init(void)
 static void tikfrk(int n)
 {
     int curmo, newday;
-    const char *nday;
+    const UBYTE *nday;
 
 /*  uptime += n; */
 

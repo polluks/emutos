@@ -1,7 +1,7 @@
 /*
  * EmuCON2 parsing functions
  *
- * Copyright (C) 2013-2015 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -10,7 +10,7 @@
  * option any later version.  See doc/license.txt for details.
  */
 #include "cmd.h"
-#include <string.h>
+#include "string.h"
 
 /*
  *  function prototypes
@@ -48,7 +48,7 @@ WORD argc, n, rc;
              * to avoid surprises, we do not convert the args of the 'echo'
              * builtin command.
              */
-            if ((nflops == 1) && (temp[1] == ':') && ((temp[0]|0x20) == 'b'))
+            if ((nflops_copy == 1) && (temp[1] == ':') && ((temp[0]|0x20) == 'b'))
                 if (!strequal(argv[0],"echo"))
                     temp[0] = '9';
 #endif

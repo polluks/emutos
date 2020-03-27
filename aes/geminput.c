@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,10 +16,10 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesvars.h"
 #include "obdefs.h"
 
 #include "geminput.h"
@@ -34,12 +34,13 @@
 #include "gemdisp.h"
 #include "gemgsxif.h"
 #include "rectfunc.h"
-#include "kprint.h"
 
 
-extern void wheel_change(WORD wheel_number, WORD wheel_amount); /* called only from aes/gemdosif.S */
-extern void b_click(WORD state); /* called only from aes/gemdosif.S */
-extern void b_delay(WORD amnt);  /* called only from aes/gemdosif.S */
+#if CONF_WITH_EXTENDED_MOUSE
+void wheel_change(WORD wheel_number, WORD wheel_amount);    /* called only from aes/gemdosif.S */
+#endif
+void b_click(WORD state);   /* called only from aes/gemdosif.S */
+void b_delay(WORD amnt);    /* called only from aes/gemdosif.S */
 
 
 #define MB_DOWN 0x01
@@ -378,7 +379,7 @@ void mchange(LONG fdata)
 }
 
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 void wheel_change(WORD wheel_number, WORD wheel_amount)
 {
     WORD wh;
@@ -405,8 +406,8 @@ void wheel_change(WORD wheel_number, WORD wheel_amount)
     wh = wm_find(xrat, yrat);
     ap_sendmsg(appl_msg, WM_ARROWED, D.w_win[wh].w_owner, wh, type, 0, 0, 0);
 */
-    (void)wh; /* silent warning */
-    (void)type; /* silent warning */
+    UNUSED(wh);
+    UNUSED(type);
 }
 #endif
 
@@ -523,7 +524,7 @@ void abutton(EVB *e, LONG p)
 {
     WORD bclicks;
 
-    if ((rlr == gl_mowner) && downorup(button, p))
+    if (downorup(button, p))
     {
         azombie(e, 1);      /* 'nuff said */
     }
@@ -549,7 +550,7 @@ void amouse(EVB *e, LONG pmo)
     mob = *(MOBLK *)pmo;
 
     /* if already in (or out) of rectangle, signal immediately */
-    if ((rlr == gl_mowner) && in_mrect(&mob))
+    if (in_mrect(&mob))
         azombie(e, 0);
     else
     {

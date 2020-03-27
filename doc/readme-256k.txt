@@ -5,9 +5,11 @@ These ROMs are suitable for the following hardware:
 - Mega STe
 - emulators of the above
 
-Note: Extra hardware is autodetected.
+Note: Extra hardware is autodetected, but the following TT- and
+Falcon-specific hardware is not supported: MMU, video, SCSI, NVRAM,
+and the second MFP of a TT.
 
-These ROMs will work fine on Hatari with any hardware combination.
+The desktop features are comparable to Atari TOS 2.
 
 Each ROM contains a single language:
 
@@ -18,6 +20,7 @@ etos256fi.img - Finnish (PAL)
 etos256fr.img - French (PAL)
 etos256gr.img - Greek (PAL)
 etos256it.img - Italian (PAL)
+etos256nl.img - Dutch (PAL)
 etos256no.img - Norwegian (PAL)
 etos256ru.img - Russian (PAL)
 etos256se.img - Swedish (PAL)
@@ -26,8 +29,6 @@ etos256us.img - English (NTSC)
 etos256uk.img - English (PAL)
 
 The following optional files are also supplied:
-emucurs.rsc - modifiable mouse cursors for the AES/desktop
-emucurs.def - definition file for the above
 emuicon.rsc - contains additional icons for the desktop
 emuicon.def - definition file for the above
 

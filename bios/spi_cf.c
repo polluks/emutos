@@ -1,7 +1,7 @@
 /*
- * spi.c - SPI interface for SD/MMC card driver
+ * spi_cf.c - SPI interface for SD/MMC card driver
  *
- * Copyright (C) 2013-2017 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -14,8 +14,7 @@
 #error This SPI implementation is only suitable for ColdFire targets
 #endif
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "coldpriv.h"
 #include "spi.h"
 
@@ -49,7 +48,7 @@
  */
 
 /*
- *  Firebee timings are as follows:
+ *  FireBee timings are as follows:
  *  SD mode:
  *      Tcsc = (PCSSCK * CSSCK / Fsys) = (3 * 4 / 132000000) = 91 nsec
  *      Tasc = (PASC * ASC / Fsys) = (3 * 4 / 132000000) = 91 nsec
@@ -161,14 +160,10 @@ void spi_cs_unassert(void)
 
 void spi_send_byte(UBYTE c)
 {
-ULONG temp;
-
-    UNUSED(temp);
-
     MCF_DSPI_DTFR = fifo_out | c;
     while(!(MCF_DSPI_DSR & MCF_DSPI_DSR_TCF))   /* wait for transfer complete */
         ;
-    temp = MCF_DSPI_DRFR;                       /* need to do this! */
+    FORCE_READ(MCF_DSPI_DRFR);                  /* need to do this! */
 
     MCF_DSPI_DSR = 0xffffffffL;                 /* clear status register */
 }

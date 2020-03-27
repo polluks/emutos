@@ -24,7 +24,7 @@ msgstr "Unità GEMDOS"
 msgid "MB"
 msgstr "MB"
 
-#: bios/initinfo.c
+#: bios/initinfo.c desk/deskinf.c
 msgid "KB"
 msgstr "KB"
 
@@ -213,7 +213,8 @@ msgstr "[1]["
 #: aes/gem_rsc.c
 msgid "[3]["
 "TOS error #%u.][Cancel]"
-msgstr "Errore TOS #%u.][Annulla]"
+msgstr "[3]["
+"Errore TOS #%u.][Annulla]"
 
 #: aes/gem_rsc.c
 msgid "[3]["
@@ -327,6 +328,10 @@ msgid "Copy's name: ________.___"
 msgstr "Nome copia: ________.___"
 
 #: desk/desk_rsc.c
+msgid "Free memory: ___________________"
+msgstr "Memoria libera: ___________________"
+
+#: desk/desk_rsc.c
 msgid "Label: ________.___"
 msgstr "Etichetta: ________.___"
 
@@ -351,44 +356,44 @@ msgid "  Desktop info..."
 msgstr "  Info scrivania..."
 
 #: desk/desk_rsc.c
-msgid "  Open            ^O"
-msgstr "  Apri              ^O"
+msgid "  Open"
+msgstr "  Apri"
 
 #: desk/desk_rsc.c
-msgid "  Info/Rename...  ^I"
-msgstr "  Info/Rinomina...  ^I"
+msgid "  Info/Rename..."
+msgstr "  Info/Rinomina..."
 
 #: desk/desk_rsc.c
-msgid "  New Folder...   ^N"
-msgstr "  Nuova cartella... ^N"
+msgid "  New folder..."
+msgstr "  Nuova cartella..."
 
 #: desk/desk_rsc.c
-msgid "  Close           ^U"
-msgstr "  Chiudi            ^U"
+msgid "  Close"
+msgstr "  Chiudi"
 
 #: desk/desk_rsc.c
-msgid "  Close window    ^W"
-msgstr "  Chiudi finestra   ^W"
+msgid "  Close window"
+msgstr "  Chiudi finestra"
 
 #: desk/desk_rsc.c
 msgid "  Set file mask..."
 msgstr "  Imposta filtro..."
 
 #: desk/desk_rsc.c
-msgid "  Delete...       ^D"
-msgstr "  Cancella...       ^D"
+msgid "  Delete..."
+msgstr "  Cancella..."
 
 #: desk/desk_rsc.c
 msgid "  Format..."
 msgstr "  Formatta..."
 
 #: desk/desk_rsc.c
-msgid "  Execute EmuCON  ^Z"
-msgstr "  Esegui EmuCON     ^Z"
+msgid "  Execute EmuCON"
+msgstr "  Esegui EmuCON"
 
 #: desk/desk_rsc.c
-msgid "  Shutdown        ^Q"
-msgstr "  Arresta sistema   ^Q"
+msgid "  Shutdown"
+msgstr "  Arresta sistema"
 
 #: desk/desk_rsc.c
 msgid "  Show as icons"
@@ -447,20 +452,20 @@ msgid "  Desktop configuration..."
 msgstr "  Configurazione scrivania..."
 
 #: desk/desk_rsc.c
-msgid "  Change resolution...  ^R"
-msgstr "  Cambia risoluzione...    ^R"
+msgid "  Change resolution..."
+msgstr "  Cambia risoluzione..."
 
 #: desk/desk_rsc.c
-msgid "  Save desktop...       ^S"
-msgstr "  Salva scrivania...       ^S"
+msgid "  Read .INF file..."
+msgstr "  Lettura file .INF..."
+
+#: desk/desk_rsc.c
+msgid "  Save desktop..."
+msgstr "  Salva scrivania..."
 
 #: desk/desk_rsc.c
 msgid "  Blitter"
 msgstr "  Blitter"
-
-#: desk/desk_rsc.c
-msgid "Attribute:"
-msgstr "Attributo:"
 
 #: desk/desk_rsc.c
 msgid "Read/Write"
@@ -599,6 +604,10 @@ msgid "NEW FOLDER"
 msgstr "NUOVA CARTELLA"
 
 #: desk/desk_rsc.c
+msgid "PRINT FILE"
+msgstr "STAMPA FILE"
+
+#: desk/desk_rsc.c
 msgid "SET PREFERENCES"
 msgstr "IMPOSTA PREFERENZE"
 
@@ -689,6 +698,10 @@ msgstr "Directory predefinita"
 #: desk/desk_rsc.c
 msgid "Input parameter:"
 msgstr "Parametri di input"
+
+#: desk/desk_rsc.c
+msgid "Function keys:"
+msgstr "Tasti funzione:"
 
 #: desk/desk_rsc.c
 msgid "SET SCREEN RESOLUTION"
@@ -819,6 +832,10 @@ msgid "TRASH"
 msgstr "CESTINO"
 
 #: desk/desk_rsc.c
+msgid "PRINTER"
+msgstr "STAMPANTE"
+
+#: desk/desk_rsc.c
 msgid "-More-"
 msgstr "-Continua-"
 
@@ -835,6 +852,10 @@ msgid "Locate item"
 msgstr "Localizza oggetto"
 
 #: desk/desk_rsc.c
+msgid "Select .INF file"
+msgstr "Seleziona un file .INF"
+
+#: desk/desk_rsc.c
 msgid "[2]["
 "Switch resolution?][ Yes | No ]"
 msgstr "[2]["
@@ -842,9 +863,16 @@ msgstr "[2]["
 
 #: desk/desk_rsc.c
 msgid "[2]["
-"Show this document?][Show|Cancel]"
+"Show or print this document?][Show|Print|Cancel]"
 msgstr "[2]["
-"Visualizzo il documento?][Visualizza|Annulla]"
+"Vuoi vedere o stampare|"
+"il documento?][Vedere|Stampare|Annulla]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Print error!][ Retry | Cancel ]"
+msgstr "[1]["
+"Errore di stampa!][ Riprova | Annulla ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -956,6 +984,14 @@ msgstr "[1]["
 
 #: desk/desk_rsc.c
 msgid "[1]["
+"%s|"
+"is a printer.][  OK  ]"
+msgstr "[1]["
+"%s|"
+"è una stampante.][  OK  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
 "You cannot drag applications,|"
 "files or folders onto the|"
 "Desktop.][  OK  ]"
@@ -1032,7 +1068,7 @@ msgid "[3]["
 msgstr "[3]["
 "Errore formattazione. Il disco|"
 "destinazione è protetto alla|"
-"scrittura o non è impiegabile.][ Riprova | Annulla ]"
+"scrittura o non è impiegabile.][ Riprova |Interrompi]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1067,7 +1103,8 @@ msgid "[1]["
 "Cannot delete directory|"
 "%s][ Skip | Retry | Abort ]"
 msgstr "[1]["
-"Impossibile cancellare|la directory|"
+"Impossibile cancellare|"
+"la directory|"
 "%s][ Salta | Riprova |Interrompi]"
 
 #: desk/desk_rsc.c
@@ -1127,6 +1164,12 @@ msgid "[1]["
 msgstr "[1]["
 "Impossibile impostare la|"
 "directory predefinita.][  OK  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Illegal .INF file format.][  OK  ]"
+msgstr "[1]["
+"Formato file .INF illegale.][  OK  ]"
 
 #: cli/cmdint.c
 msgid "Copy <filespec> ... to standard output"
@@ -1281,8 +1324,8 @@ msgid "left/right arrow = previous/next character"
 msgstr "freccia sin./dr. = carattere prec./seg."
 
 #: cli/cmdint.c
-msgid "shift-left/right arrow = previous/next word"
-msgstr "shift-freccia sin./dr. = parola prec./seg."
+msgid "control-left/right arrow = previous/next word"
+msgstr "control-sin./freccia dr. = parola precedente/seguente"
 
 #: cli/cmdint.c
 msgid "invalid mode argument"

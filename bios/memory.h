@@ -1,7 +1,7 @@
 /*
  * memory.h - Memory functions
  *
- * Copyright (C) 2016-2017 The EmuTOS development team
+ * Copyright (C) 2016-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -30,8 +30,6 @@
 #endif
 
 #ifndef ASM_SOURCE
-
-#include "portab.h"
 
 void ttram_detect(void);
 

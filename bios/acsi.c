@@ -1,7 +1,7 @@
 /*
  * acsi.c - Atari Computer System Interface (ACSI) support
  *
- * Copyright (C) 2002-2018 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -12,23 +12,22 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
+#include "emutos.h"
 #include "acsi.h"
 #include "scsi.h"
 #include "disk.h"
 #include "dma.h"
-#include "kprint.h"
 #include "string.h"
 #include "mfp.h"
 #include "machine.h"
 #include "tosvars.h"
 #include "gemerror.h"
 #include "blkdev.h"
-#include "processor.h"
+#include "biosext.h"    /* for cache control routines */
 #include "asm.h"
 #include "cookie.h"
 #include "delay.h"
-#include "biosmem.h"
+#include "biosdefs.h"
 
 #if CONF_WITH_ACSI
 
@@ -43,7 +42,7 @@ static int send_command(UBYTE *cdb,WORD cdblen,WORD rw,WORD dev,WORD cnt,UWORD r
 static int do_acsi_rw(WORD rw, LONG sect, WORD cnt, UBYTE *buf, WORD dev);
 static LONG acsi_capacity(WORD dev, ULONG *info);
 static LONG acsi_testunit(WORD dev);
-
+static LONG acsi_inquiry(WORD dev, UBYTE *buf);
 
 /* the following exists to allow the data and control registers to
  * be written together as well as separately.  this avoids the
@@ -76,6 +75,8 @@ union acsidma {
 /* delay for dma out toggle */
 #define delay() delay_loop(loopcount_delay)
 
+/* Bytes to request for an INQUIRY command */
+#define INQUIRY_BYTES 36
 
 /*
  * local variables
@@ -135,7 +136,7 @@ LONG acsi_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
 
         p = use_tmpbuf ? tmp_buf : buf;
         if (rw && use_tmpbuf)
-            memcpy(p, buf, (LONG)numsecs * SECTOR_SIZE);
+            memcpy(p, buf, numsecs * SECTOR_SIZE);
 
         for (retry = 0; retry < 2; retry++) {
             err = do_acsi_rw(rw, sector, numsecs, p, dev);
@@ -150,10 +151,10 @@ LONG acsi_rw(WORD rw, LONG sector, WORD count, UBYTE *buf, WORD dev)
         }
 
         if (!rw && use_tmpbuf)
-            memcpy(buf, p, (LONG)numsecs * SECTOR_SIZE);
+            memcpy(buf, p, numsecs * SECTOR_SIZE);
 
         count -= numsecs;
-        buf += (LONG)numsecs * SECTOR_SIZE;
+        buf += numsecs * SECTOR_SIZE;
         sector += numsecs;
     }
     return 0;
@@ -179,8 +180,21 @@ LONG acsi_ioctl(UWORD dev, UWORD ctrl, void *arg)
         rc = acsi_testunit(dev);
         if (rc < 0)
             return EUNDEV;
-        /* TODO: here we could attempt an INQUIRY & return the name from that */
-        strcpy(arg, "ACSI Disk");
+        rc = acsi_inquiry(dev,dskbufp);
+        /* ACSI devices are not required to support INQUIRY.
+           Return generic name in case command failed.
+         */
+        if (rc == 0) {
+            /* Only accept direct-access devices (e.g. HDDs). */
+            if ((dskbufp[0] & 0x1F) != 0)
+                return EUNDEV;
+            /* Zero terminate vendor & product ID. */
+            dskbufp[32] = 0;
+            strcpy(arg, (char *)&dskbufp[8]);
+        } else {
+            strcpy(arg, "ACSI Disk");
+            rc = 0; /* Don't return an error. */
+        }
         break;
     case GET_MEDIACHANGE:
         rc = MEDIANOCHANGE;
@@ -201,7 +215,7 @@ static LONG acsi_capacity(WORD dev, ULONG *info)
     set_dma_addr(dskbufp);
 
     cdb[0] = 0x25;          /* set up Read Capacity cdb */
-    memset(cdb+1,0x00,9);
+    bzero(cdb+1,9);
     status = send_command(cdb,10,RW_READ,dev,1,1);
 
     acsi_end();
@@ -224,13 +238,36 @@ static LONG acsi_testunit(WORD dev)
 
     acsi_begin();
 
-    memset(cdb,0x00,6);     /* set up Test Unit Ready cdb */
+    bzero(cdb,6);           /* set up Test Unit Ready cdb */
     status = send_command(cdb,6,RW_READ,dev,0,0);
 
     acsi_end();
 
     return status;
 }
+
+static LONG acsi_inquiry(WORD dev, UBYTE *buf)
+{
+    UBYTE cdb[6];
+    int status;
+
+    acsi_begin();
+
+    /* load DMA base address */
+    set_dma_addr(buf);
+
+    cdb[0] = 0x12;          /* set up Inquiry cdb */
+    cdb[1] = cdb[2] = cdb[3] = cdb[5] = 0;
+    cdb[4] = INQUIRY_BYTES; /* retrieve 36 bytes at maximum. */
+    status = send_command(cdb,6,RW_READ,dev,1,1);
+
+    acsi_end();
+
+    invalidate_data_cache(buf,INQUIRY_BYTES);
+
+    return status;
+}
+
 
 /* must call this before manipulating any ACSI-related hardware */
 static void acsi_begin(void)
@@ -263,7 +300,7 @@ static int do_acsi_rw(WORD rw, LONG sector, WORD cnt, UBYTE *buf, WORD dev)
 {
     UBYTE cdb[10];  /* allow for 10-byte read/write commands */
     int status, cdblen;
-    LONG buflen = (LONG)cnt * SECTOR_SIZE;
+    LONG buflen = cnt * SECTOR_SIZE;
 
     /* flush data cache here so that memory is current */
     if (rw == RW_WRITE)

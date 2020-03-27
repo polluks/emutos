@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,10 +16,10 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesvars.h"
 #include "obdefs.h"
 #include "gemlib.h"
 
@@ -39,6 +39,7 @@
 #include "funcdef.h"
 #include "intmath.h"
 #include "string.h"
+#include "asm.h"
 
 /* Global variables: */
 BOOL     gl_play;
@@ -135,11 +136,11 @@ void ap_tplay(const EVNTREC *pbuff,WORD length,WORD scale)
                 /*
                  * disconnect cursor drawing & movement routines
                  */
-                i_ptr(justretf);
-                gsx_ncode(CUR_VECX, 0, 0);
+                i_ptr(just_rts);
+                gsx_0code(CUR_VECX);
                 m_lptr2(&drwaddr);  /* old address will be used by drawrat() */
-                i_ptr(justretf);
-                gsx_ncode(MOT_VECX, 0, 0);
+                i_ptr(just_rts);
+                gsx_0code(MOT_VECX);
                 m_lptr2(&mot_vecx_save);
             }
             f.f_code = mchange;
@@ -163,9 +164,9 @@ void ap_tplay(const EVNTREC *pbuff,WORD length,WORD scale)
         drawrat(xrat, yrat);
         gsx_setmousexy(xrat, yrat);     /* no jumping cursors, please */
         i_ptr(drwaddr);                 /* restore vectors */
-        gsx_ncode(CUR_VECX, 0, 0);
+        gsx_0code(CUR_VECX);
         i_ptr(mot_vecx_save);
-        gsx_ncode(MOT_VECX, 0, 0);
+        gsx_0code(MOT_VECX);
     }
 
     gl_play = FALSE;
@@ -243,7 +244,6 @@ void ap_exit(void)
     wait_for_accs(AP_ACCLOSE);  /* block until all DAs have seen AC_CLOSE */
     if (rlr->p_qindex)
         ap_rdwr(MU_MESAG, rlr, rlr->p_qindex, (WORD *)D.g_valstr);
-    set_mouse_to_arrow();
     wm_update(END_UPDATE);
     all_run();
     rlr->p_flags &= ~AP_OPEN;   /* say appl_exit() is done */

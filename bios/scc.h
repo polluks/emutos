@@ -1,7 +1,7 @@
 /*
  * scc.h - header for SCC chip
  *
- * Copyright (C) 2013 The EmuTOS development team
+ * Copyright (C) 2013-2019 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -12,9 +12,6 @@
 
 #ifndef _SCC_H
 #define _SCC_H
-
-#include "config.h"
-#include "portab.h"
 
 #if CONF_WITH_SCC
 /*

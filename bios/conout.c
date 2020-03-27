@@ -3,7 +3,7 @@
  *
  *
  * Copyright (C) 2004 by Authors (see below)
- * Copyright (C) 2016-2018 The EmuTOS development team
+ * Copyright (C) 2016-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -17,10 +17,8 @@
  * If we ever add a 16x32 font, the code will need changing!
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "lineavars.h"
-#include "font.h"
 #include "tosvars.h"            /* for v_bas_ad */
 #include "sound.h"              /* for bell() */
 #include "string.h"

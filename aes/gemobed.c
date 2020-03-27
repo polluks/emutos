@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,10 +16,10 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
 #include "obdefs.h"
+#include "aesext.h"
 #include "intmath.h"
 #include "gemlib.h"
 
@@ -27,11 +27,26 @@
 #include "gemgraf.h"
 #include "geminit.h"
 #include "gemobjop.h"
-#include "optimize.h"
 #include "gemobed.h"
 
 #include "string.h"
 #include "scancode.h"
+
+
+/*
+ * validation strings used in check()
+ *
+ * note that most documentation on this is incorrect.  the following
+ * strings agree with TOS 2/3/4 actual usage.
+ */
+#define VALIDATE_N "0..9A..Z \x80\x8e\x8f\x90\x92\x99\x9a\x9e\xa5\xb5\xb6\xb7\xb8\xc2..$dc"
+#define VALIDATE_A (VALIDATE_N+4)               /* 0..9 are omitted */
+#define VALIDATE_n "0..9a..zA..Z \x80..\xff"
+#define VALIDATE_a (VALIDATE_n+4)               /* 0..9 are omitted */
+#define VALIDATE_F ":?*a..zA..Z0..9_\x80..\xff"
+#define VALIDATE_f (VALIDATE_F+3)               /* :?* are omitted */
+#define VALIDATE_P ".?*a..zA..Z0..9_\\:\x80..\xff"
+#define VALIDATE_p (VALIDATE_P+3)               /* .?* are omitted */
 
 
 static TEDINFO  edblk;
@@ -88,6 +103,30 @@ void ob_center(OBJECT *tree, GRECT *pt)
         hd += th;
     }
     r_set(pt, xd, yd, wd, hd);
+}
+
+
+/*
+ *  Inserts character 'chr' into the string pointed to 'str', at
+ *  position 'pos' (positions are relative to the start of the
+ *  string; inserting at position 0 means inserting at the start
+ *  of the string).  'tot_len' gives the maximum length the string
+ *  can grow to; if necessary, the string will be truncated after
+ *  inserting the character.
+ */
+void ins_char(char *str, WORD pos, char chr, WORD tot_len)
+{
+    WORD ii, len;
+
+    len = strlen(str);
+
+    for (ii = len; ii > pos; ii--)
+        str[ii] = str[ii-1];
+    str[ii] = chr;
+    if (len+1 < tot_len)
+        str[len+1] = '\0';
+    else
+        str[tot_len-1] = '\0';
 }
 
 
@@ -219,40 +258,40 @@ static WORD check(char *in_char, char valchar)
     rstr = NULL;
     switch(valchar)
     {
-    case '9':           /* 0..9                 */
+    case '9':           /* 0..9 */
         rstr = "0..9";
         upcase = FALSE;
         break;
-    case 'A':           /* A..Z, <space>        */
-        rstr = "a..zA..Z ";
+    case 'A':           /* A..Z, <SPACE>, uppercase non-Roman */
+        rstr = VALIDATE_A;
         break;
-    case 'N':           /* 0..9, A..Z, <SPACE>  */
-        rstr = "a..zA..Z0..9 ";
+    case 'N':           /* 0..9, A..Z, <SPACE>, uppercase non-Roman */
+        rstr = VALIDATE_N;
         break;
-    case 'P':           /* DOS pathname + '\', '?', '*', ':','.',','*/
-        rstr = "a..zA..Z0..9 $#&@!%()-{}'`_^~\\?*:.,";
+    case 'a':           /* a..z, A..Z, <SPACE>, 0x80..0xff */
+        rstr = VALIDATE_a;
+        upcase = FALSE;
         break;
-    case 'p':           /* DOS pathname + '\` + ':'     */
-        rstr = "a..zA..Z0..9 $#&@!%()-{}'`_^~\\:";
+    case 'n':           /* 0..9, a..z, A..Z, <SPACE>, 0x80..0xff */
+        rstr = VALIDATE_n;
+        upcase = FALSE;
         break;
-    case 'F':           /* DOS filename + ':', '?' + '*' */
-        rstr = "a..zA..Z0..9 $#&@!%()-{}'`_^~:?*";
+    case 'F':           /* ':', '?', '*' + DOS filename */
+        rstr = VALIDATE_F;
         break;
     case 'f':           /* DOS filename */
-        rstr = "a..zA..Z0..9 $#&@!%()-{}'`_^~";
+        rstr = VALIDATE_f;
         break;
-    case 'a':           /* a..z, A..Z, <SPACE>  */
-        rstr = "a..zA..Z ";
-        upcase = FALSE;
+    case 'P':           /* '.', '?', '*' + DOS pathname */
+        rstr = VALIDATE_P;
         break;
-    case 'n':           /* 0..9, a..z, A..Z, <SPACE> */
-        rstr = "a..zA..Z0..9 ";
-        upcase = FALSE;
+    case 'p':           /* DOS pathname */
+        rstr = VALIDATE_p;
         break;
-    case 'x':           /* anything, but upcase */
-        *in_char = toupper(*in_char);
+    case 'X':           /* anything */
         return TRUE;
-    case 'X':           /* anything             */
+    case 'x':           /* anything, but change lowercase to uppercase */
+        *in_char = toupper(*in_char);
         return TRUE;
     }
 

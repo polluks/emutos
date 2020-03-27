@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,9 +19,9 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "obdefs.h"
+#include "aesext.h"
 #include "intmath.h"
 #include "funcdef.h"
 
@@ -30,19 +30,13 @@
 #include "optimopt.h"
 #include "gsx2.h"
 #include "rectfunc.h"
-#include "kprint.h"
 
-#define ORGADDR NULL
+#define g_vsf_interior( x )       gsx_1code(SET_FILL_INTERIOR, x)
+#define g_vsl_type( x )           gsx_1code(SET_LINE_TYPE, x)
+#define g_vsf_style( x )          gsx_1code(SET_FILL_STYLE, x)
+#define g_vsf_color( x )          gsx_1code(SET_FILL_COLOR, x)
+#define g_vsl_udsty( x )          gsx_1code(SET_UD_LINE_STYLE, x)
 
-                                                /* in GSXBIND.C         */
-#define g_vsf_interior( x )       gsx_1code(S_FILL_STYLE, x)
-#define g_vsl_type( x )           gsx_1code(S_LINE_TYPE, x)
-#define g_vsf_style( x )          gsx_1code(S_FILL_INDEX, x)
-#define g_vsf_color( x )          gsx_1code(S_FILL_COLOR, x)
-#define g_vsl_udsty( x )          gsx_1code(ST_UD_LINE_STYLE, x)
-
-#define YRES_LIMIT  380     /* screens with yres less than this are considered */
-                            /*  'small' for the purposes of get_char_height()  */
 
 GLOBAL WORD     gl_width;
 GLOBAL WORD     gl_height;
@@ -180,15 +174,15 @@ static void gsx_xline(WORD ptscount, WORD *ppoints)
  *  Routine to draw a certain number of points in a polyline relative
  *  to a given x,y offset
  */
-void gsx_pline(WORD offx, WORD offy, WORD cnt, const WORD *pts)
+void gsx_pline(WORD offx, WORD offy, WORD cnt, const Point *pts)
 {
     WORD    i, j;
 
     for (i = 0; i < cnt; i++)
     {
         j = i * 2;
-        ptsin[j] = offx + pts[j];
-        ptsin[j+1] = offy + pts[j+1];
+        ptsin[j] = offx + pts[i].x;
+        ptsin[j+1] = offy + pts[i].y;
     }
 
     gsx_xline(cnt, ptsin);
@@ -231,7 +225,7 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
     {
         if (color != gl_tcolor)
         {
-            contrl[0] = S_TEXT_COLOR;
+            contrl[0] = SET_TEXT_COLOR;
             gl_tcolor = color;
         }
     }
@@ -239,7 +233,7 @@ void gsx_attr(UWORD text, UWORD mode, UWORD color)
     {
         if (color != gl_lcolor)
         {
-            contrl[0] = S_LINE_COLOR;
+            contrl[0] = SET_LINE_COLOR;
             gl_lcolor = color;
         }
     }
@@ -336,30 +330,6 @@ void gsx_xcbox(GRECT *pt)
 
 
 /*
- *  Routine to fix up the MFDB of a particular raster form
- */
-void gsx_fix(FDB *pfd, void *theaddr, WORD wb, WORD h)
-{
-    if (theaddr == ORGADDR)
-    {
-        pfd->fd_w = gl_ws.ws_xres + 1;
-        pfd->fd_wdwidth = pfd->fd_w / 16;
-        pfd->fd_h = gl_ws.ws_yres + 1;
-        pfd->fd_nplanes = gl_nplanes;
-    }
-    else
-    {
-        pfd->fd_wdwidth = wb / 2;
-        pfd->fd_w = wb * 8;
-        pfd->fd_h = h;
-        pfd->fd_nplanes = 1;
-    }
-    pfd->fd_stand = FALSE;
-    pfd->fd_addr = theaddr;
-}
-
-
-/*
  *  Routine to blit, to and from a specific area
  */
 void gsx_blt(void *saddr, UWORD sx, UWORD sy, UWORD swb,
@@ -413,21 +383,12 @@ void gsx_trans(void *saddr, UWORD swb, void *daddr, UWORD dwb, UWORD h)
 
 
 /*
- *  Determine char height based on yres in WS
- */
-static WORD get_char_height(WS *ws)
-{
-    return (ws->ws_yres<YRES_LIMIT) ? 6 : ws->ws_chmaxh;
-}
-
-
-/*
  *  Routine to initialize all the global variables dealing with
  *  a particular workstation open
  */
 void gsx_start(void)
 {
-    WORD    char_height;
+    WORD dummy;
 
     /* reset variables to force initial VDI calls */
     gl_mode = gl_tcolor = gl_lcolor = -1;
@@ -439,13 +400,20 @@ void gsx_start(void)
     gl_height = gl_hclip = gl_ws.ws_yres + 1;
     gl_nplanes = gsx_nplanes();
 
-    KINFO(("VDI video mode = %dx%d %d-bit\n", gl_width, gl_height, gl_nplanes));
+    KINFO(("VDI video mode = %dx%d %d-%s\n", gl_width, gl_height, gl_nplanes,
+        (gl_nplanes < 16 ? "plane" : "bit")));
 
-    char_height = gl_ws.ws_chminh;
-    vst_height( char_height, &gl_wsptschar, &gl_hsptschar,
-                                &gl_wschar, &gl_hschar );
-    char_height = get_char_height(&gl_ws);
-    vst_height(char_height, &gl_wptschar, &gl_hptschar, &gl_wchar, &gl_hchar);
+    /*
+     * replacement VDIs (e.g. NVDI) may support more than two font sizes.
+     * we use the current font height for the big (IBM) desktop font,
+     * and the minimum font height for the small (SMALL) desktop font.
+     */
+    gsx_textsize(&gl_wptschar, &gl_hptschar, &gl_wchar, &gl_hchar);
+    gl_ws.ws_chmaxh = gl_hptschar;  /* save the IBM font size here */
+    vst_height(gl_ws.ws_chminh, &gl_wsptschar, &gl_hsptschar, &gl_wschar, &gl_hschar);
+
+    /* must restore the current font height */
+    vst_height(gl_ws.ws_chmaxh, &dummy, &dummy, &dummy, &dummy);
 
     gl_hbox = gl_hchar + 3;
     gl_wbox = (gl_hbox * gl_ws.ws_hpixel) / gl_ws.ws_wpixel;
@@ -538,14 +506,11 @@ static void gsx_tcalc(WORD font, char *ptext, WORD *ptextw, WORD *ptexth, WORD *
 
 void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
 {
-    WORD    pts_height;
-
     if (tb_f == IBM)
     {
         if (tb_f != gl_font)
         {
-            pts_height = get_char_height(&gl_ws);
-            vst_height(pts_height, &gl_wptschar, &gl_hptschar, &gl_wchar, &gl_hchar);
+            vst_height(gl_ws.ws_chmaxh, &gl_wptschar, &gl_hptschar, &gl_wchar, &gl_hchar);
             gl_font = tb_f;
         }
         y += gl_hptschar;
@@ -555,14 +520,13 @@ void gsx_tblt(WORD tb_f, WORD x, WORD y, WORD tb_nc)
     {
         if (tb_f != gl_font)
         {
-            pts_height = gl_ws.ws_chminh;
-            vst_height(pts_height, &gl_wsptschar, &gl_hsptschar, &gl_wschar, &gl_hschar);
+            vst_height(gl_ws.ws_chminh, &gl_wsptschar, &gl_hsptschar, &gl_wschar, &gl_hschar);
             gl_font = tb_f;
         }
         y += gl_hsptschar;
     }
 
-    contrl[0] = 8;          /* TEXT */
+    contrl[0] = TEXT;
     contrl[1] = 1;
     contrl[6] = gl_handle;
     ptsin[0] = x;

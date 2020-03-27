@@ -6,7 +6,7 @@
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
 *                 2001 John Elliott
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -21,19 +21,18 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
+#include <stdarg.h>
 #include "obdefs.h"
-#include "dos.h"
 #include "gemdos.h"
 #include "optimize.h"
 
+#include "aesdefs.h"
 #include "deskbind.h"
 #include "deskglob.h"
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
-#include "gembind.h"
 #include "aesbind.h"
 #include "deskmain.h"
 #include "desksupp.h"
@@ -42,11 +41,11 @@
 #include "deskinf.h"
 #include "deskins.h"
 #include "deskpro.h"
+#include "deskrsrc.h"
 #include "biosdefs.h"
 
 #include "string.h"
 #include "gemerror.h"
-#include "kprint.h"
 
 
 /*
@@ -60,51 +59,41 @@
  */
 static BOOL exit_desktop;
 
+#if CONF_WITH_SEARCH
+static WORD fnodes_found;
+static WNODE *search_window;
+#endif
+
+#if CONF_WITH_PRINTER_ICON
+#define PRTBUFSIZE  16384       /* buffer size */
+#endif
+
 /*
  *  Issue an alert
  */
 WORD fun_alert(WORD defbut, WORD stnum)
 {
-    rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert);
-    return form_alert(defbut, G.a_alert);
+    return form_alert(defbut, desktop_str_addr(stnum));
 }
 
 
 /*
- *  Issue an alert after merging in an optional character variable
+ *  Issue an alert after merging in a variable
+ *
+ *  The following way of handling multiple types for the variable to be
+ *  merged is a bit of a kludge, but at least we make an attempt to
+ *  avoid obvious problems ...
  */
-WORD fun_alert_merge(WORD defbut, WORD stnum, char merge)
+WORD fun_alert_merge(WORD defbut, WORD stnum, ...)
 {
-    rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert);
-    sprintf(G.g_1text, G.a_alert, merge);
+    va_list ap;
+    _Static_assert(sizeof(void *) >= sizeof(long),"incompatible type sizes");
 
-    return form_alert(defbut, G.g_1text);
-}
+    va_start(ap, stnum);
+    sprintf(G.g_work, desktop_str_addr(stnum), va_arg(ap,void *));
+    va_end(ap);
 
-
-#if CONF_WITH_FORMAT
-/*
- *  Issue an alert after merging in a long variable
- */
-WORD fun_alert_long(WORD defbut, WORD stnum, LONG merge)
-{
-    rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert);
-    sprintf(G.g_1text, G.a_alert, merge);
-
-    return form_alert(defbut, G.g_1text);
-}
-#endif
-
-
-/*
- *  Issue an alert after merging in a string
- */
-WORD fun_alert_string(WORD defbut, WORD stnum, char *merge)
-{
-    rsrc_gaddr_rom(R_STRING, stnum, (void **)&G.a_alert);
-    sprintf(G.g_1text, G.a_alert, merge);
-
-    return form_alert(defbut, G.g_1text);
+    return form_alert(defbut, G.g_work);
 }
 
 
@@ -161,7 +150,7 @@ void fun_rebld_marked(void)
 {
     WNODE *pwin;
 
-    graf_mouse(HGLASS, NULL);
+    desk_busy_on();
 
     /* check all wnodes     */
     for (pwin = G.g_wfirst; pwin; pwin = pwin->w_next)
@@ -173,7 +162,7 @@ void fun_rebld_marked(void)
         }
     }
 
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
 }
 
 
@@ -184,7 +173,7 @@ void fun_rebld(char *ptst)
 {
     WNODE *pwin;
 
-    graf_mouse(HGLASS, NULL);
+    desk_busy_on();
 
     /* check all wnodes     */
     for (pwin = G.g_wfirst; pwin; pwin = pwin->w_next)
@@ -196,8 +185,443 @@ void fun_rebld(char *ptst)
         } /* if */
     } /* for */
 
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
 } /* fun_rebld */
+
+
+/*
+ *  Adds another folder to a pathname, assumed to be of the form:
+ *      D:\X\Y\F.E
+ *  where X,Y are folders and F.E is a filename.  In the above
+ *  example, if the folder to be added was Z, this would change
+ *  D:\X\Y\F.E to D:\X\Y\Z\F.E
+ *
+ *  Note: if the folder to be added is an empty string, we do nothing.
+ *  This situation occurs when building the path string for a desktop
+ *  shortcut that points to the root folder.
+ *
+ *  returns FALSE iff the resulting pathname would be too long
+ */
+BOOL add_one_level(char *pathname,char *folder)
+{
+    WORD plen, flen;
+    char filename[LEN_ZFNAME+1], *p;
+
+    flen = strlen(folder);
+    if (flen == 0)
+        return TRUE;
+
+    plen = strlen(pathname);
+    if (plen+flen+1 >= MAXPATHLEN)
+        return FALSE;
+
+    p = filename_start(pathname);
+    strcpy(filename,p);     /* save filename portion */
+    strcpy(p,folder);       /* & copy in folder      */
+    p += flen;
+    *p++ = '\\';            /* add the trailing path separator */
+    strcpy(p,filename);     /* & restore the filename          */
+    return TRUE;
+}
+
+
+/*
+ *  Removes the lowest level of folder from a pathname, assumed
+ *  to be of the form:
+ *      D:\X\Y\Z\F.E
+ *  where X,Y,Z are folders and F.E is a filename.  In the above
+ *  example, this would change D:\X\Y\Z\F.E to D:\X\Y\F.E
+ */
+static void remove_one_level(char *pathname)
+{
+    char *stop = pathname+2;    /* the first path separator */
+    char *filename, *prev;
+
+    filename = filename_start(pathname);
+    if (filename-1 <= stop)     /* already at the root */
+        return;
+
+    for (prev = filename-2; prev >= stop; prev--)
+        if (*prev == '\\')
+            break;
+
+    strcpy(prev+1,filename);
+}
+
+
+#if CONF_WITH_SEARCH
+/*
+ *  converts string to wildcard-format spec
+ *
+ *  the string is obtained from the dialog box via unfmt_str()
+ *
+ *  sample conversions:
+ *      "A"         => "A*.*"
+ *      ".DOC"      => "*.DOC"
+ *      "X?Y.?Z"    => "X?Y*.?Z*"
+ */
+static void convert(char *wildcard, char *str)
+{
+    WORD i;
+    char *p, *q;
+
+    /* convert name */
+    for (i = 0, p = str, q = wildcard; i < 8; i++)
+    {
+        if (!*p || (*p == '.'))
+        {
+            *q++ = '*';
+            break;
+        }
+        if (*p == '*')
+        {
+            *q++ = *p++;
+            break;
+        }
+        *q++ = *p++;
+    }
+    *q++ = '.';
+
+    /* look for end of name */
+    while(TRUE)
+    {
+        if (!*p)
+            break;
+        if (*p++ == '.')
+            break;
+    }
+
+    /* convert type */
+    for (i = 0; i < 3; i++)
+    {
+        if (!*p)
+        {
+            *q++ = '*';
+            break;
+        }
+        if (*p == '*')
+        {
+            *q++ = *p++;
+            break;
+        }
+        *q++ = *p++;
+    }
+    *q++ = '\0';
+}
+
+
+/*
+ *  Prompt for Search specification
+ *
+ *  returns FALSE if Cancel, or specification is empty
+ */
+static BOOL search_prompt(char *searchname)
+{
+    char filemask[LEN_ZFNAME];
+    OBJECT *tree;
+
+    tree = desk_rs_trees[ADSEARCH];
+
+    /*
+     * clear any wildcard in dialog
+     */
+    set_tedinfo_name(tree, SFNAME, "");
+
+    /*
+     * get user input & if not 'OK', return FALSE
+     */
+    inf_show(tree, ROOT);
+    if (inf_what(tree, SFOK, SFCANCEL) != 1)
+        return FALSE;
+
+    /*
+     * extract searchname from dialog
+     *
+     * returns TRUE iff the input is not empty
+     */
+    inf_sget(tree, SFNAME, filemask);
+    unfmt_str(filemask, searchname);
+
+    return *searchname ? TRUE : FALSE;
+}
+
+
+/*
+ *  Mark files/folders matching specification and, if one or more
+ *  are found, redisplays window with the first-found match as high
+ *  as possible within the window
+ *
+ *  if no matches are found, returns FALSE and does not redisplay
+ */
+static BOOL mark_matching_fnodes(WNODE *pw, char *searchwild)
+{
+    WORD first_match = -1, n;
+    FNODE *pf;
+
+    /*
+     * select all matching FNODEs
+     */
+    for (pf = pw->w_pnode.p_flist, n = 0; pf; pf = pf->f_next, n++)
+    {
+        if (wildcmp(searchwild, pf->f_name))
+        {
+            pf->f_selected = TRUE;
+            fnodes_found++;
+            if (first_match < 0)
+                first_match = n;
+        }
+    }
+    if (first_match < 0)
+        return FALSE;
+
+    /*
+     * update info line & redisplay window, showing first match
+     */
+    win_sinfo(pw, TRUE);
+    win_dispfile(pw, first_match);
+
+    return TRUE;
+}
+
+
+/*
+ *  Display a folder with matching FNODEs marked
+ */
+static BOOL search_display(WORD curr, char *pathname, char *searchwild)
+{
+    BOOL newwin = FALSE;
+
+    if (!search_window)
+    {
+        search_window = win_alloc(curr);
+        if (!search_window)
+        {
+            fun_alert(1, STNOWIND);
+            return FALSE;
+        }
+        newwin = TRUE;
+    }
+
+    /*
+     * we open the new path, after closing the previous one (which
+     * doesn't exist if this is a new window)
+     */
+    if (!newwin)
+        pn_close(&search_window->w_pnode);
+    if (!do_diropen(search_window, newwin, curr, pathname,
+                    (GRECT *)&G.g_screen[search_window->w_root].ob_x, FALSE))
+        return FALSE;   /* bad pathname or error reading directory */
+
+    /*
+     * now mark matching FNODEs
+     */
+    mark_matching_fnodes(search_window, searchwild);
+
+    /*
+     *  we marked one or more FNODEs, ask if user wants to continue
+     */
+    if (fun_alert(1, STCNSRCH) != 1)
+        return FALSE;   /* user cancelled */
+
+    return TRUE;
+}
+
+
+/*
+ *  Recursively search folder icons
+ *
+ *  returns FALSE iff we should stop immediately, e.g. because user cancelled
+ */
+static BOOL search_recursive(WORD curr, char *pathname, char *searchwild)
+{
+    DTA dta, *save_dta;
+    char *p;
+    WORD ret;
+    BOOL ok = TRUE;
+
+    /*
+     * we must use a local DTA to manage the recursive search
+     */
+    save_dta = dos_gdta();
+    dos_sdta(&dta);
+
+    /*
+     * check if there is a filename match; if so, display the folder
+     */
+    p = filename_start(pathname);
+    strcpy(p, searchwild);
+    ret = dos_sfirst(pathname, DISPATTR);
+    strcpy(p, "*.*");
+    dos_sdta(save_dta); /* in case we must return */
+
+    switch(ret) {
+    case 0:             /* file found, display folder */
+        if (!search_display(curr, pathname, searchwild))
+            return FALSE;   /* user cancelled */
+        FALLTHROUGH;
+    case ENMFIL:        /* nothing found, continue processing */
+    case EFILNF:
+        break;
+    default:            /* some strange kind of error, ignore silently */
+        return TRUE;
+    }
+
+    /*
+     * at this point, either there were no matching filenames, or we found
+     * some but the user wants to continue.  we do an fsfirst/fsnext loop
+     * and call ourselves for every folder found.
+     */
+    dos_sdta(&dta);     /* original DTA is already saved */
+
+    for (ret = dos_sfirst(pathname, DISPATTR), ok = TRUE; ret==0; ret = dos_snext())
+    {
+        if (dta.d_fname[0] == '.')  /* ignore . and .. */
+            continue;
+
+        if (dta.d_attrib & FA_SUBDIR)
+        {
+            if (!add_one_level(pathname, dta.d_fname))
+                continue;   /* pathname is too long, silently ignore: FIXME */
+            ok = search_recursive(0, pathname, searchwild);
+            remove_one_level(pathname);
+            if (!ok)
+                break;
+        }
+    }
+
+    dos_sdta(save_dta);
+
+    /*
+     * by design, errors from fsfirst/fsnext are ignored
+     */
+    return ok;
+}
+
+
+/*
+ *  Process the specified icon
+ *
+ *  returns TRUE iff we should continue
+ */
+static BOOL search_icon(WORD win, WORD curr, char *searchwild)
+{
+    ANODE *pa;
+    FNODE *pf;
+    char pathname[LEN_ZPATH];
+    char *p;
+
+    pa = i_find(win, curr, &pf, NULL);
+    if (!pa)
+        return TRUE;
+
+    switch(pa->a_type) {
+    case AT_ISFOLD:
+#if CONF_WITH_DESKTOP_SHORTCUTS
+        if (pa->a_flags & AF_ISDESK)
+        {
+            strcpy(pathname, pa->a_pdata);
+        }
+        else
+#endif
+        {
+            WNODE *temp = win_find(win);
+            strcpy(pathname, temp->w_pnode.p_spec);
+            strcpy(filename_start(pathname), pf->f_name);
+        }
+        break;
+    case AT_ISDISK:
+        p = pathname;
+        *p++ = pa->a_letter;
+        *p++ = ':';
+        *p = '\0';
+        break;
+    default:            /* do nothing for file, trash or printer icon */
+        return TRUE;
+    }
+
+    strcat(pathname, "\\*.*");
+
+    if (!search_recursive(curr, pathname, searchwild))
+        return FALSE;   /* propagate error to fun_search() */
+
+    return TRUE;
+}
+
+
+/*
+ *  Perform the desktop Search function
+ */
+void fun_search(WORD curr, WNODE *pw)
+{
+    char searchname[LEN_ZFNAME], searchwild[LEN_ZFNAME];
+
+    if (!search_prompt(searchname))     /* prompt for name to search for */
+        return;
+
+    convert(searchwild, searchname);    /* convert to standard wildcard */
+
+    /*
+     * if there are one or more highlighted icons, process them
+     */
+    fnodes_found = 0;
+    if (curr)
+    {
+        WORD win = G.g_cwin;    /* save because the global variables */
+        WORD root = G.g_croot;  /*  will be changed by search_icon() */
+        GRECT gr;
+
+        search_window = NULL;
+        for ( ; curr; curr = win_isel(G.g_screen, root, curr))
+        {
+            if (!search_icon(win, curr, searchwild))
+                return;         /* user cancelled search */
+        }
+        if (fnodes_found)
+        {
+            fun_alert(1, STNOMORE); /* no more files */
+            wind_get_grect(win, WF_WXYWH, &gr);
+            do_wredraw(win, &gr);   /* redraw the original window (may be desktop) */
+            return;
+        }
+    }
+    else    /* otherwise handle an open window with no highlighted icons */
+    {
+        mark_matching_fnodes(pw, searchwild);
+    }
+
+    if (!fnodes_found)
+        fun_alert_merge(1, STFILENF, searchname);
+}
+#endif
+
+
+#if CONF_WITH_SELECTALL
+void fun_selectall(WNODE *pw)
+{
+    GRECT gr;
+    FNODE *pf;
+
+    /* paranoia - check for desktop pseudo-window */
+    if (pw->w_root == DROOT)
+        return;
+
+    /*
+     * select all filenodes & corresponding screen objects
+     */
+    for (pf = pw->w_pnode.p_flist; pf; pf = pf->f_next)
+    {
+        pf->f_selected = TRUE;
+        G.g_screen[pf->f_obid].ob_state |= SELECTED;
+    }
+
+    /*
+     * update info line & redisplay window
+     */
+    win_sinfo(pw, TRUE);
+    wind_get_grect(pw->w_id, WF_WXYWH, &gr);
+    fun_msg(WM_REDRAW, pw->w_id, gr.g_x, gr.g_y, gr.g_w, gr.g_h);
+}
+#endif
 
 
 #if CONF_WITH_FILEMASK
@@ -209,14 +633,13 @@ void fun_mask(WNODE *pw)
     char *maskptr, filemask[LEN_ZFNAME];
     OBJECT *tree;
 
-    tree = G.a_trees[ADFMASK];
+    tree = desk_rs_trees[ADFMASK];
 
     /*
      * get current filemask & insert in dialog
      */
     maskptr = filename_start(pw->w_pnode.p_spec);
-    fmt_str(maskptr, filemask);
-    inf_sset(tree, FMMASK, filemask);
+    set_tedinfo_name(tree, FMMASK, maskptr);
 
     /*
      * get user input
@@ -247,7 +670,7 @@ WORD fun_mkdir(WNODE *pw_node)
     char  fnew_name[LEN_ZFNAME], unew_name[LEN_ZFNAME], *ptmp;
     char  path[MAXPATHLEN];
 
-    tree = G.a_trees[ADMKDBOX];
+    tree = desk_rs_trees[ADMKDBOX];
     pp_node = &pw_node->w_pnode;
     ptmp = path;
     strcpy(ptmp, pp_node->p_spec);
@@ -293,6 +716,44 @@ WORD fun_mkdir(WNODE *pw_node)
     end_dialog(tree);
     return TRUE;
 }
+
+
+#if CONF_WITH_PRINTER_ICON
+/*
+ *  Print one or more files dropped onto the printer icon
+ *  (we silently ignore icons that aren't files)
+ *
+ *  returns FALSE iff the user cancelled the print
+ */
+static BOOL fun_print(WORD sobj, LONG bufsize, char *iobuf)
+{
+    ANODE *pa;
+    FNODE *pf;
+    WNODE *pw;
+    char path[MAXPATHLEN];
+
+    pa = i_find(G.g_cwin, sobj, &pf, NULL);
+
+    if (!pa)    /* "can't happen" */
+        return TRUE;
+
+    if (pa->a_type != AT_ISFILE)
+        return TRUE;
+
+    if (pf)     /* it's a window icon */
+    {
+        pw = win_find(G.g_cwin);    /* build the path */
+        strcpy(path, pw->w_pnode.p_spec);
+        strcpy(filename_start(path), pf->f_name);
+    }
+    else        /* it's a desktop icon */
+    {
+        strcpy(path,pa->a_pdata);   /* the path is in the anode */
+    }
+
+    return print_file(path, bufsize, iobuf);
+}
+#endif
 
 
 /*
@@ -376,30 +837,6 @@ static void fun_full_close(WNODE *pw)
 
 
 /*
- *  Removes the lowest level of folder from a pathname, assumed
- *  to be of the form:
- *      D:\X\Y\Z\F.E
- *  where X,Y,Z are folders and F.E is a filename.  In the above
- *  example, this would change D:\X\Y\Z\F.E to D:\X\Y\F.E
- */
-static void remove_one_level(char *pathname)
-{
-    char *stop = pathname+2;    /* the first path separator */
-    char *filename, *prev;
-
-    filename = filename_start(pathname);
-    if (filename-1 <= stop)     /* already at the root */
-        return;
-
-    for (prev = filename-2; prev >= stop; prev--)
-        if (*prev == '\\')
-            break;
-
-    strcpy(prev+1,filename);
-}
-
-
-/*
  * full or partial close of desktop window
  */
 void fun_close(WNODE *pw, WORD closetype)
@@ -407,7 +844,7 @@ void fun_close(WNODE *pw, WORD closetype)
     char pathname[MAXPATHLEN];
     char *fname;
 
-    graf_mouse(HGLASS, NULL);
+    desk_busy_on();
 
     /*
      * handle CLOSE_FOLDER and CLOSE_TO_ROOT
@@ -432,7 +869,7 @@ void fun_close(WNODE *pw, WORD closetype)
     else
         w_setpath(pw,pathname);
 
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
 }
 
 
@@ -594,6 +1031,27 @@ static WORD fun_file2desk(PNODE *pn_src, WORD icontype_src, ANODE *an_dest, WORD
             pathname[0] = pn_src->p_spec[0];
             operation = OP_DELETE;
             break;
+#if CONF_WITH_PRINTER_ICON
+        case AT_ISPRNT:
+            {
+            WORD sobj = 0;
+            char *prtbuf = dos_alloc_anyram(PRTBUFSIZE);
+
+            if (!prtbuf)
+            {
+                malloc_fail_alert();
+                break;
+            }
+            while((sobj = win_isel(G.g_screen, G.g_croot, sobj)))
+            {
+                if (!fun_print(sobj, PRTBUFSIZE, prtbuf))
+                    if (fun_alert(1, STABORT) != 2) /* quit unless "No" */
+                        break;
+            }
+            dos_free(prtbuf);
+            }
+            break;
+#endif
         default:            /* "can't happen" */
             illegal_op_msg();
         }
@@ -664,7 +1122,7 @@ static WORD fun_file2any(WORD sobj, WNODE *wn_dest, ANODE *an_dest, FNODE *fn_de
     ANODE *an_src;
     char path[MAXPATHLEN];
 
-    an_src = i_find(DESKWH, sobj, NULL, NULL);
+    an_src = app_afind_by_id(sobj);
 
 #if CONF_WITH_DESKTOP_SHORTCUTS
     if ((an_src->a_type == AT_ISFILE) || (an_src->a_type == AT_ISFOLD))
@@ -700,6 +1158,13 @@ static WORD fun_file2any(WORD sobj, WNODE *wn_dest, ANODE *an_dest, FNODE *fn_de
                 okay = fun_file2desk(pn_src, icontype, an_dest, dobj, keystate);
             }
         }
+#if CONF_WITH_DESKTOP_SHORTCUTS
+        else    /* we are dragging an orphan desktop shortcut.  orphans happen */
+                /* when the corresponding file has been deleted or moved.      */
+        {
+            remove_locate_shortcut(sobj);   /* prompt user */
+        }
+#endif
         pn_close(pn_src);
         desk_clear(DESKWH);
     }
@@ -723,7 +1188,7 @@ static void fun_desk2win(WORD wh, WORD dobj, WORD keystate)
     sobj = 0;
     while ((sobj = win_isel(G.g_screen, DROOT, sobj)))
     {
-        an_src = i_find(DESKWH, sobj, NULL, NULL);
+        an_src = app_afind_by_id(sobj);
         if (an_src)
         {
             switch(an_src->a_type)
@@ -732,6 +1197,9 @@ static void fun_desk2win(WORD wh, WORD dobj, WORD keystate)
                 if (!valid_drive(an_src->a_letter))
                     continue;
                 break;
+#if CONF_WITH_PRINTER_ICON
+            case AT_ISPRNT:
+#endif
             case AT_ISTRSH:
                 continue;
             }
@@ -760,7 +1228,7 @@ static void fun_desk2desk(WORD dobj, WORD keystate)
     sobj  = 0;
     while ((sobj = win_isel(G.g_screen, DROOT, sobj)))
     {
-        source = i_find(DESKWH, sobj, NULL, NULL);
+        source = app_afind_by_id(sobj);
         if (!source || (source == target))
             continue;
         switch(source->a_type)
@@ -774,6 +1242,9 @@ static void fun_desk2desk(WORD dobj, WORD keystate)
                     continue;
                 }
                 break;
+#if CONF_WITH_PRINTER_ICON
+            case AT_ISPRNT:
+#endif
             case AT_ISTRSH:
                 continue;
         }
@@ -839,7 +1310,7 @@ static WORD delete_ffd(char *path, WORD icontype)
     if (pn == NULL)     /* "can't happen" - pathname too long! */
         return 0;
 
-    graf_mouse(HGLASS, NULL);
+    desk_busy_on();
     pn_active(pn, FALSE);
     if (pn->p_flist)
     {
@@ -848,7 +1319,7 @@ static WORD delete_ffd(char *path, WORD icontype)
         ret = fun_op(OP_DELETE, icontype, pn, NULL);
     }
     pn_close(pn);
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
 
     return ret;
 }
@@ -867,13 +1338,13 @@ void fun_del(WORD sobj)
      * if the item selected is on the desktop, there may be other desktop
      * items that have been selected; make sure we process all of them
      */
-    if ( (i_find(DESKWH, sobj, NULL, NULL)) )
+    if ( (app_afind_by_id(sobj)) )
     {
         if (wants_to_delete_files() == FALSE)   /* i.e. remove icons or cancel */
             return;
         for ( ; sobj; sobj = win_isel(G.g_screen, DROOT, sobj))
         {
-            pa = i_find(DESKWH,sobj,NULL,NULL);
+            pa = app_afind_by_id(sobj);
             if (!pa)
                 continue;
             switch(pa->a_type) {

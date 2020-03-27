@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -16,11 +16,11 @@
 *       -------------------------------------------------------------
 */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
 #include "obdefs.h"
-#include "gemlib.h"
+#include "aesdefs.h"
+#include "aesext.h"
 #include "gem_rsc.h"
 
 #include "gemdos.h"
@@ -31,39 +31,12 @@
 #include "string.h"
 #include "nls.h"
 
-/*
- * defines & typedefs
- */
-
-/* type definitions for use by an application when calling      */
-/*  rsrc_gaddr and rsrc_saddr                                   */
-
-#define R_TREE      0
-#define R_OBJECT    1
-#define R_TEDINFO   2
-#define R_ICONBLK   3
-#define R_BITBLK    4
-#define R_STRING    5               /* gets pointer to free strings */
-#define R_IMAGEDATA 6               /* gets pointer to free images  */
-#define R_OBSPEC    7
-#define R_TEPTEXT   8               /* sub ptrs in TEDINFO  */
-#define R_TEPTMPLT  9
-#define R_TEPVALID  10
-#define R_IBPMASK   11              /* sub ptrs in ICONBLK  */
-#define R_IBPDATA   12
-#define R_IBPTEXT   13
-#define R_BIPDATA   14              /* sub ptrs in BITBLK   */
-#define R_FRSTR     15              /* gets addr of ptr to free strings     */
-#define R_FRIMG     16              /* gets addr of ptr to free images      */
-
-
 
 /*******  LOCALS  **********************/
 
 static RSHDR   *rs_hdr;
 static AESGLOBAL *rs_global;
-static char    tmprsfname[128];
-static char    free_str[256];   /* must be long enough for longest freestring in gem.rsc */
+static char tmprsfname[MAXPATHLEN];
 
 
 /*
@@ -76,8 +49,8 @@ static void fix_chpos(WORD *pfix, WORD offset)
     WORD cpos;
 
     cpos = *pfix;
-    coffset = (cpos >> 8) & 0x00ff;
-    cpos &= 0x00ff;
+    coffset = HIBYTE(cpos);
+    cpos = LOBYTE(cpos);
 
     switch(offset)
     {
@@ -258,7 +231,7 @@ static BOOL fix_ptr(WORD type, WORD index)
 }
 
 
-static void fix_tedinfo(void)
+static void fix_tedinfo_std(void)
 {
     WORD ii;
     TEDINFO *ted;
@@ -368,7 +341,7 @@ static WORD rs_readit(AESGLOBAL *pglobal,UWORD fd)
      * base of file into pointers
      */
     fix_trindex();
-    fix_tedinfo();
+    fix_tedinfo_std();
     ibcnt = rs_hdr->rsh_nib;
     fix_nptrs(ibcnt, R_IBPMASK);
     fix_nptrs(ibcnt, R_IBPDATA);
@@ -426,6 +399,111 @@ WORD rs_load(AESGLOBAL *pglobal, char *rsfname)
 /* Get a string from the GEM-RSC */
 char *rs_str(UWORD stnum)
 {
-    strcpy(free_str, gettext(rs_fstr[stnum]));
-    return free_str;
+    return (char *)gettext(rs_fstr[stnum]);
+}
+
+/*
+ *  The xlate_obj_array() & create_te_ptext() functions below are used by
+ *  the generated GEM rsc code in aes/gem_rsc.c, and by the desktop
+ */
+
+/*  Counts the occurrences of c in str */
+static int count_chars(char *str, char c)
+{
+    int count;
+
+    count = 0;
+    while(*str)
+    {
+        if (*str++ == c)
+            count++;
+    }
+
+    return count;
+}
+
+/* Translates the strings in an OBJECT array */
+void xlate_obj_array(OBJECT *obj_array, int nobj)
+{
+    OBJECT *obj;
+    char **str;
+
+    for (obj = obj_array; --nobj >= 0; obj++) {
+        switch(obj->ob_type)
+        {
+#if 0
+        /*
+         * at the moment, there are no G_TEXT or G_BOXTEXT items in the
+         * EmuTOS resources.  note that, if they are added, erd will have
+         * to be updated too.
+         */
+        case G_TEXT:
+        case G_BOXTEXT:
+            str = & ((TEDINFO *)obj->ob_spec)->te_ptext;
+            *str = (char *)gettext(*str);
+            break;
+#endif
+        case G_FTEXT:
+        case G_FBOXTEXT:
+            str = & ((TEDINFO *)obj->ob_spec)->te_ptmplt;
+            *str = (char *)gettext(*str);
+            break;
+        case G_STRING:
+        case G_BUTTON:
+        case G_TITLE:
+            obj->ob_spec = (LONG) gettext( (char *) obj->ob_spec);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+/*
+ * Create the TEDINFO te_ptext strings for a ROM resource
+ *
+ * In order to save space in the ROMs, the te_ptext ptr is set to NULL,
+ * where possible.  The te_ptext strings are created here from te_ptmplt.
+ *
+ * returns address of allocated memory (NULL if insufficient memory)
+ */
+char *create_te_ptext(TEDINFO *tedinfo, int nted)
+{
+    int i = 0;
+    long len;
+    int j;
+    char *ptextptr, *p;
+
+    /* Fix TEDINFO strings: */
+    len = 0;
+    for (i = 0; i < nted; i++)
+    {
+        if (tedinfo[i].te_ptext == NULL)
+        {
+            /* Count number of '_' in strings
+             * ( +2 for @ at the beginning, and \0 at the end )
+             */
+            len += count_chars(tedinfo[i].te_ptmplt, '_') + 2;
+        }
+    }
+    ptextptr = dos_alloc_anyram(len);   /* Get memory */
+    if (!ptextptr)
+        return NULL;
+
+    for (i = 0, p = ptextptr; i < nted; i++)
+    {
+        if (tedinfo[i].te_ptext == NULL)
+        {
+            tedinfo[i].te_ptext = p;
+            *p++ = '@';         /* First character of uninitialized string */
+            len = count_chars(tedinfo[i].te_ptmplt, '_');
+            for (j = 0; j < len; j++)
+            {
+                *p++ = '_';     /* Set other characters to '_' */
+            }
+            *p++ = '\0';        /* Final nul */
+        }
+    }
+
+    return ptextptr;
 }

@@ -2,7 +2,7 @@
  * portab.h - Definitions for writing portable C
  *
  * Copyright (C) 2001 Lineo, Inc
- *               2001-2018 The EmuTOS development team
+ *               2001-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -35,6 +35,12 @@
 #define NORETURN
 #endif
 
+#ifdef __GNUC__
+#define PRINTF_STYLE __attribute__ ((format (printf, 1, 2)))
+#else
+#define PRINTF_STYLE
+#endif
+
 /* Convenience macros to test the versions of glibc and gcc.
    Use them like this:
    #if __GNUC_PREREQ (2,8)
@@ -59,8 +65,10 @@
 
 #undef AND_MEMORY
 #if __GNUC_PREREQ(2, 6)
-#define AND_MEMORY , "memory"
+#define CLOBBER_MEMORY "memory"     /* When memory is the only clobber */
+#define AND_MEMORY , CLOBBER_MEMORY /* When memory is the last clobber */
 #else
+#define CLOBBER_MEMORY
 #define AND_MEMORY
 #endif
 
@@ -78,6 +86,7 @@
 #define GLOBAL                                  /* Global variable         */
 #define UNUSED(x)       (void)(x)               /* Unused variable         */
 #define MAYBE_UNUSED(x) UNUSED(x)               /* Maybe unused variable   */
+#define FORCE_READ(x)   UNUSED(x)     /* Read a volatile hardware register */
 
 /*
  *  Types
@@ -97,6 +106,9 @@ typedef LONG (*PFLONG)(void);
 /* pointer to function returning VOID */
 typedef void (*PFVOID)(void);
 
+/* BDOS program entry point */
+typedef void PRG_ENTRY(void) /* NORETURN */;
+
 /*
  *  Macros
  */
@@ -109,6 +121,7 @@ typedef void (*PFVOID)(void);
 #define HIBYTE(x) ((UBYTE)((UWORD)(x) >> 8))
 #define IS_ODD(x) ((x) & 1)
 #define IS_ODD_POINTER(x) IS_ODD((ULONG)(x))
+#define IS_32BIT_POINTER(x) ((ULONG)(x) & 0xff000000)
 
 /*
  * The following ARRAY_SIZE() macro is taken from Linux kernel sources.

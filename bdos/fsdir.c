@@ -2,7 +2,7 @@
  * fsdir.c - directory routines for the file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2018 The EmuTOS development team
+ *               2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -122,8 +122,7 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
 #include "fs.h"
 #include "time.h"
@@ -131,7 +130,7 @@
 #include "gemerror.h"
 #include "biosbind.h"
 #include "string.h"
-#include "kprint.h"
+#include "bdosstub.h"
 
 #define ROOT_PSEUDO_CLUSTER 1   /* see comments in xrename() */
 
@@ -319,7 +318,7 @@ long xrmdir(char *p)
     {
         if (!(f = (FCB *) ixread(fd,32L,NULL)))
             break;
-    } while ((f->f_name[0] == (char)ERASE_MARKER) || (f->f_attrib == FA_LFN));
+    } while ((f->f_name[0] == ERASE_MARKER) || (f->f_attrib == FA_LFN));
 
     if ((f != (FCB *)NULL) && (f->f_name[0] != 0x00))
         return EACCDN;
@@ -384,7 +383,7 @@ long xrmdir(char *p)
  *                  EPTHNF
  *                  EFILNF
  */
-long xchmod(char *p, int wrt, char mod)
+long xchmod(char *p, int wrt, UBYTE mod)
 {
     OFD *fd;
     DND *dn;                                /*  M01.01.03   */
@@ -532,7 +531,7 @@ long xsfirst(char *name, int att)
 static FCB *ixsnext(DTAINFO *dt)
 {
     char name[12];
-    char *buf, *bufend;
+    UBYTE *buf, *bufend;
     DMD *dmd;
     BCB *bcb;
     FCB *fcb;
@@ -615,7 +614,7 @@ static FCB *ixsnext(DTAINFO *dt)
     /*
      * update the private area
      */
-    offset = (char *)fcb - buf + sizeof(FCB);   /* to next FCB within buffer */
+    offset = (UBYTE *)fcb - buf + sizeof(FCB);  /* to next FCB within buffer */
     if (buftype == BT_ROOT)
     {
         dt->dt_offset_drive = (recnum << dmd->m_rblog) + offset;
@@ -884,7 +883,8 @@ long xrename(int n, char *p1, char *p2)
     DMD *dmd1, *dmd2;
     CLNO strtcl1, strtcl2, temp;
     const char *s1, *s2;
-    char buf[11], att;
+    char buf[11];
+    UBYTE att;
     int hnew;
     long posp;
     UWORD filetime, filedate;
@@ -1004,7 +1004,7 @@ long xrename(int n, char *p1, char *p2)
         fd2 = getofd(hnew); /* fd2 is the OFD for the new file/folder */
 
         /* now we can erase (0xe5) the old file */
-        buf[0] = (char)ERASE_MARKER;
+        buf[0] = ERASE_MARKER;
         if (update_fcb(fd,posp,1L,(UBYTE *)buf) < 0)
         {
             KDEBUG(("xrename(): can't erase old entry\n"));
@@ -1040,7 +1040,7 @@ long xrename(int n, char *p1, char *p2)
             }
 
             /* set attribute for this file in parent directory */
-            if (update_fcb(fdparent,fd2->o_dirbyt+11,1L,(UBYTE *)&att) < 0)
+            if (update_fcb(fdparent,fd2->o_dirbyt+11,1L,&att) < 0)
             {
                 KDEBUG(("xrename(): can't update parent's attr byte\n"));
                 return EINTRN;
@@ -1246,7 +1246,7 @@ FCB *dirinit(DND *dn)
     OFD *fd;            /*  ofd for this dir  */
     int num;
     RECNO i2;
-    char *s1;
+    UBYTE *s1;
     DMD *dm;
     FCB *f1;
 
@@ -1539,7 +1539,7 @@ FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
          */
         if ((fcb->f_attrib & FA_SUBDIR)         &&
             (fcb->f_name[0] != '.')             &&
-            (fcb->f_name[0] != (char)ERASE_MARKER))
+            (fcb->f_name[0] != ERASE_MARKER))
         {       /*  see if we already have it  */
             dnd1 = getdnd(&fcb->f_name[0], dnd);
             if (!dnd1)
@@ -1564,7 +1564,7 @@ FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
      */
     if (!m)
     {       /*  assumes that (*n != 0xe5) (if posp == -1)  */
-        if (fcb && (*n == (char)ERASE_MARKER))
+        if (fcb && (*n == ERASE_MARKER))
             return fcb;
         return (FCB *)NULL;
     }
@@ -1794,11 +1794,11 @@ static BOOL match(char *s1, char *s2)
      *  only specific requests for deleted entries do.
      */
 
-    if (*s2 == (char)ERASE_MARKER)
+    if (*s2 == ERASE_MARKER)
     {
         if (*s1 == '?')
             return FALSE;
-        else if (*s1 == (char)ERASE_MARKER)
+        else if (*s1 == ERASE_MARKER)
             return TRUE;
     }
 

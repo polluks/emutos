@@ -1,7 +1,7 @@
 /*
  * ikbd.c - Intelligent keyboard routines
  *
- * Copyright (C) 2001-2018 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -20,19 +20,16 @@
  * not supported:
  * - alt-help screen hardcopy
  * - KEYTBL.TBL config with _AKP cookie (tos 5.00 and later)
- * - CLRHOME and INSERT in kbshift.
  */
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
+#include "emutos.h"
 #include "country.h"
-#include "portab.h"
 #include "acia.h"
-#include "kprint.h"
 #include "tosvars.h"
+#include "biosext.h"
 #include "lineavars.h"
-#include "tosvars.h"
 #include "iorec.h"
 #include "asm.h"
 #include "ikbd.h"
@@ -57,11 +54,29 @@ static WORD convert_scancode(UBYTE *scancodeptr);
 #define KEY_ALT     0x38
 #define KEY_CAPS    0x3a
 
+#define KEY_ESCAPE  0x01        /* invariant keys, unaffected by modifiers */
+#define KEY_BACKSPACE 0x0e
+#define KEY_TAB     0x0f
+#define KEY_UNDO    0x61
+
+#define KEY_RETURN  0x1c        /* semi-invariant, ctrl changes ascii to newline */
+#define KEY_ENTER   0x72
+
 #define KEY_F1      0x3b        /* function keys F1 - F10 */
 #define KEY_F10     0x44
 
+#define KEY_CTRL_HOME 0x77      /* scancode values set when ctrl modifies scancode */
+#define KEY_CTRL_LTARROW 0x73
+#define KEY_CTRL_RTARROW 0x74
+
+#define TOPROW_START 0x02       /* numeric keys, minus, equals */
+#define TOPROW_END  0x0d
+
 #define KEYPAD_START 0x67       /* numeric keypad: 7 8 9 4 5 6 1 2 3 0 */
 #define KEYPAD_END  0x70
+
+/* standard ascii */
+#define LF          0x0a
 
 /*
  * support for mouse emulation:
@@ -344,14 +359,14 @@ static BOOL handle_mouse_mode(WORD newkey)
         break;
     case KEY_UPARROW:
         distance = -distance;
-        /* drop through */
+        FALLTHROUGH;
     case KEY_DNARROW:
         mouse_packet[1] = 0;        /* Atari TOS only allows one direction at a time */
         mouse_packet[2] = distance;
         break;
     case KEY_LTARROW:
         distance = -distance;
-        /* drop through */
+        FALLTHROUGH;
     case KEY_RTARROW:
         mouse_packet[1] = distance;
         mouse_packet[2] = 0;        /* Atari TOS only allows one direction at a time */
@@ -515,7 +530,9 @@ static UBYTE kb_switched;
 /*
  * convert a scancode to an ascii character
  *
- * for shifted function keys, we also update the scancode
+ * for certain keys, we also update the scancode:
+ *  shifted function keys
+ *  some keys when modified by ctrl
  */
 static WORD convert_scancode(UBYTE *scancodeptr)
 {
@@ -524,8 +541,27 @@ static WORD convert_scancode(UBYTE *scancodeptr)
     const UBYTE *a;
 
     /*
-     * do special processing for alt-arrow, alt-keypad, shift-function
-     * keys, then return
+     * do special processing for some keys that are in the same position
+     * on all keyboards:
+     * (a) invariant scancodes (unaffected by modifier keys)
+     * (b) return/enter (unaffected except that ctrl causes LF to be returned)
+     */
+    switch(scancode) {
+    case KEY_RETURN:
+    case KEY_ENTER:
+        if (shifty & MODE_CTRL)
+            return LF;
+        FALLTHROUGH;
+    case KEY_ESCAPE:
+    case KEY_BACKSPACE:
+    case KEY_TAB:
+    case KEY_UNDO:
+        return current_keytbl.norm[scancode];
+    }
+
+    /*
+     * do special processing for alt-arrow, alt-help, alt-keypad,
+     * alt-number & shift-function keys, then return
      */
     if (shifty & MODE_ALT) {
         /*
@@ -535,6 +571,11 @@ static WORD convert_scancode(UBYTE *scancodeptr)
         if (handle_mouse_mode(scancode))    /* we sent a packet, */
             return 0;                       /* so we're done     */
 
+        if (scancode == KEY_HELP) {
+            dumpflg++;      /* tell VBL to call scrdmp() function */
+            return 0;
+        }
+
         /* ALT-keypad means that char number */
         if ((scancode >= KEYPAD_START) && (scancode <= KEYPAD_END)) {
             if (kb_altnum < 0)
@@ -542,6 +583,10 @@ static WORD convert_scancode(UBYTE *scancodeptr)
             else kb_altnum *= 10;
             kb_altnum += "\7\10\11\4\5\6\1\2\3\0" [scancode-KEYPAD_START];
             return -1;
+        }
+        if ((scancode >= TOPROW_START) && (scancode <= TOPROW_END)) {
+            *scancodeptr += 0x76;
+            return 0;
         }
     } else if (shifty & MODE_SHIFT) {
         /* function keys F1 to F10 => F11 to F20 */
@@ -556,10 +601,11 @@ static WORD convert_scancode(UBYTE *scancodeptr)
      * the presence or absence of the DUAL_KEYBOARD feature
      *
      * Alt-X handling:
-     * if the DUAL_KEYBOARD feature is present, Alt-X always generates
-     * an ascii value of zero; otherwise, Alt-X performs an ascii
-     * lookup using the 'alternate' keyboard tables, which are set up
-     * as (scancode,ascii) pairs.
+     * we obtain a default ascii value by using the standard keyboard
+     * tables.  if the DUAL_KEYBOARD feature is not present, we may then
+     * override that value via a lookup using the 'alternate' keyboard
+     * tables, which are set up as (scancode,ascii) pairs.  finally we
+     * zero out alphabetic ascii values.
      *
      * All other key handling:
      * if 'kb_switched' is set (only set if a keyboard table has the
@@ -569,6 +615,14 @@ static WORD convert_scancode(UBYTE *scancodeptr)
      * scancode lookup tables).
      */
     if (shifty & MODE_ALT) {
+        if (shifty & MODE_SHIFT) {
+            a = current_keytbl.shft;
+        } else if (shifty & MODE_CAPS) {
+            a = current_keytbl.caps;
+        } else {
+            a = current_keytbl.norm;
+        }
+        ascii = a[scancode];
         if ((current_keytbl.features & DUAL_KEYBOARD) == 0) {
             if (shifty & MODE_SHIFT) {
                 a = current_keytbl.altshft;
@@ -584,6 +638,9 @@ static WORD convert_scancode(UBYTE *scancodeptr)
                 ascii = *a;
             }
         }
+        if (((ascii >= 'A') && (ascii <= 'Z'))
+         || ((ascii >= 'a') && (ascii <= 'z')))
+            ascii = 0;
     } else {
         if (shifty & MODE_SHIFT) {
             a = kb_switched ? current_keytbl.altshft : current_keytbl.shft;
@@ -595,9 +652,33 @@ static WORD convert_scancode(UBYTE *scancodeptr)
         ascii = a[scancode];
     }
 
+    /*
+     * Ctrl key handling is mostly straightforward, but there are a few warts
+     */
     if (shifty & MODE_CTRL) {
-        /* More complicated in TOS, but is it really necessary ? */
-        ascii &= 0x1F;
+        switch(ascii) {
+        case '-':
+            ascii = 0x1f;
+            break;
+        case '2':
+            ascii = 0x00;
+            break;
+        case '6':
+            ascii = 0x1e;
+        }
+        switch(scancode) {
+        case KEY_HOME:
+            *scancodeptr = KEY_CTRL_HOME;
+            break;
+        case KEY_LTARROW:
+            *scancodeptr = KEY_CTRL_LTARROW;
+            break;
+        case KEY_RTARROW:
+            *scancodeptr = KEY_CTRL_RTARROW;
+            break;
+        default:
+            ascii &= 0x1F;
+        }
     } else if (kb_dead >= 0) {
         a = current_keytbl.dead[kb_dead];
         while (*a && *a != ascii) {
@@ -643,6 +724,7 @@ void kbd_int(UBYTE scancode)
         }
     }
 
+#if CONF_WITH_EXTENDED_MOUSE
     /* the additional mouse buttons use a separate vector */
     if (   scancode_only == 0x37  /* Mouse button 3 */
         || scancode_only == 0x5e  /* Mouse button 4 */
@@ -655,6 +737,7 @@ void kbd_int(UBYTE scancode)
         mousexvec(scancode);
         return;
     }
+#endif
 
     if (scancode & KEY_RELEASED) {
         switch (scancode_only) {
@@ -684,6 +767,14 @@ void kbd_int(UBYTE scancode)
             shifty &= ~MODE_CAPS;       /* clear bit */
             break;
 #endif
+        case KEY_HOME:
+            shifty &= ~MODE_HOME;       /* clear bit */
+            kb_ticks = 0;               /* stop key repeat */
+            break;
+        case KEY_INSERT:
+            shifty &= ~MODE_INSERT;     /* clear bit */
+            kb_ticks = 0;               /* stop key repeat */
+            break;
         default:                    /* non-modifier keys: */
             kb_ticks = 0;               /*  stop key repeat */
         }
@@ -739,6 +830,17 @@ void kbd_int(UBYTE scancode)
     /*
      * a non-modifier key has been pressed
      */
+    if (shifty & MODE_ALT) {    /* only if the Alt key is down ... */
+        switch(scancode) {
+        case KEY_HOME:
+            shifty |= MODE_HOME;    /* set bit */
+            break;
+        case KEY_INSERT:
+            shifty |= MODE_INSERT;  /* set bit */
+            break;
+        }
+    }
+
     ascii = convert_scancode(&scancode);
     if (ascii < 0)      /* dead key (including alt-keypad) processing */
         return;
@@ -955,8 +1057,7 @@ void kbd_init(void)
     kb_altnum = -1;    /* not in an alt-numeric sequence */
     kb_switched = 0;   /* not switched initially */
 
-    conterm = 7;       /* keyclick and autorepeat on by default */
-    conterm |= 0x8;    /* add Kbshift state to Bconin value */
+    conterm = 7;       /* keyclick, key repeat & system bell on by default */
 
     shifty = 0;        /* initial state of modifiers */
 

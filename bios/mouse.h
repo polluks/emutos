@@ -1,7 +1,7 @@
 /*
  * mouse.h - mouse routines header
  *
- * Copyright (C) 2001-2013 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  MAD   Martin Doering
@@ -14,9 +14,6 @@
 
 #ifndef MOUSE_H
 #define MOUSE_H
-
-#include "portab.h"
-
 
 /* Defines for mouse configuration in IKBD */
                     /* the following values apply to 'topmode' in 'struct param' */
@@ -66,10 +63,10 @@ struct mouse_data {
 
 
 /* External declarations */
-extern void Initmous(WORD , struct param *, PFVOID);
+void Initmous(WORD , struct param *, PFVOID);
 
-extern void mouse_init(void);   /* Initialize mouse */
-extern void mouse_int(void);    /* mouse interrupt vector */
+void mouse_init(void);          /* Initialize mouse */
+void mouse_int(void);           /* mouse interrupt vector */
 
 
 #endif /* MOUSE_H */

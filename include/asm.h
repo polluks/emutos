@@ -1,7 +1,7 @@
 /*
  * asm.h - Assembler help routines
  *
- * Copyright (C) 2001-2017 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -11,8 +11,9 @@
  */
 
 /*
- * This file contains utility routines (macros) to
- * perform functions not directly available from C.
+ * This file contains two types of item:
+ * . function prototypes for functions in miscasm.S
+ * . macros/inline functions to perform functions not directly available from C
  *
  * available macros:
  *
@@ -32,26 +33,14 @@
 #ifndef ASM_H
 #define ASM_H
 
-/*
- * values of 'mode' for Pexec()
- *
- * these were moved here because of the definition of trap1_pexec() below
- */
-#define PE_LOADGO     0
-#define PE_LOAD       3
-#define PE_GO         4
-#define PE_BASEPAGE   5
-#define PE_GOTHENFREE 6
-#define PE_BASEPAGEFLAGS 7
-#define PE_RELOCATE   50    /* required for NatFeats support only, not in Atari TOS */
-
-/* OS entry points implemented in util/miscasm.S */
-extern long trap1(int, ...);
-extern long trap1_pexec(short mode, const char * path,
-  const void * tail, const char * env);
+/* External function doing nothing */
+extern void just_rts(void);
 
 /* Wrapper around the STOP instruction. This preserves SR. */
 extern void stop_until_interrupt(void);
+
+/* perform WORD multiply/divide with rounding */
+WORD mul_div_round(WORD mult1, WORD mult2, WORD divisor);
 
 /*
  * Push/Pop registers from stack, with ColdFire support.
@@ -224,6 +213,40 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 
 
 /*
+ * roll(ULONG x, WORD count);
+ *  rotates x leftwards by count bits
+ */
+#ifdef __mcoldfire__
+#define roll(x,n)    x=(x>>(32-(n)))|(x<<(n))
+#else
+#define roll(x,n)                   \
+    __asm__ volatile                \
+    ("rol.l %2,%1"                  \
+    : "=d"(x)       /* outputs */   \
+    : "0"(x),"I"(n) /* inputs */    \
+    : "cc"          /* clobbered */ \
+    )
+#endif
+
+
+/*
+ * rorl(ULONG x, WORD count);
+ *  rotates x rightwards by count bits
+ */
+#ifdef __mcoldfire__
+#define rorl(x,n)    x=(x<<(32-(n)))|(x>>(n))
+#else
+#define rorl(x,n)                   \
+    __asm__ volatile                \
+    ("ror.l %2,%1"                  \
+    : "=d"(x)       /* outputs */   \
+    : "0"(x),"I"(n) /* inputs */    \
+    : "cc"          /* clobbered */ \
+    )
+#endif
+
+
+/*
  * Warning: The following macros use "memory" in the clobber list,
  * even if the memory is not modified. On ColdFire, this is necessary
  * to prevent these instructions being reordered by the compiler.
@@ -279,17 +302,19 @@ __extension__                             \
 #define regsafe_call(addr)                         \
 __extension__                                      \
 ({__asm__ volatile ("lea     -60(sp),sp\n\t"       \
-                    "movem.l d0-d7/a0-a6,(sp)");   \
-  ((void (*)(void))addr)();                        \
-  __asm__ volatile ("movem.l (sp),d0-d7/a0-a6\n\t" \
-                    "lea     60(sp),sp");          \
+                    "movem.l d0-d7/a0-a6,(sp)\n\t" \
+                    "jsr (%0)\n\t"                 \
+                    "movem.l (sp),d0-d7/a0-a6\n\t" \
+                    "lea     60(sp),sp"            \
+                    : : "a"(addr));  \
 })
 #else
 #define regsafe_call(addr)                         \
 __extension__                                      \
-({__asm__ volatile ("movem.l d0-d7/a0-a6,-(sp)");  \
-  ((void (*)(void))addr)();                        \
-  __asm__ volatile ("movem.l (sp)+,d0-d7/a0-a6");  \
+({__asm__ volatile ("movem.l d0-d7/a0-a6,-(sp)\n\t"\
+                    "jsr (%0)\n\t"                 \
+                    "movem.l (sp)+,d0-d7/a0-a6"    \
+                    : : "a"(addr));  \
 })
 #endif
 

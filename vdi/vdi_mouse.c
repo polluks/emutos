@@ -3,24 +3,27 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2018 by The EmuTOS development team
+ * Copyright 2002-2019 by The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "asm.h"
 #include "biosbind.h"
 #include "xbiosbind.h"
-#include "aespub.h"
 #include "obdefs.h"
 #include "gsxdefs.h"
+#include "aesext.h"
 #include "vdi_defs.h"
-#include "../bios/tosvars.h"
-#include "../bios/lineavars.h"
-#include "kprint.h"
+#include "vdistub.h"
+#include "tosvars.h"
+#include "biosext.h"
+#include "lineavars.h"
+#if WITH_AES
+#include "../aes/aesstub.h"
+#endif
 
 
 /* Mouse / sprite structure */
@@ -40,25 +43,22 @@ extern void     (*user_cur)(void);      /* user cursor vector */
 extern void     (*user_mot)(void);      /* user motion vector */
 extern Mcdb     mouse_cdb;              /* storage for mouse sprite */
 
-/* call the vectors from C */
-extern void call_user_but(WORD status);
-extern void call_user_wheel(WORD wheel_number, WORD wheel_amount);
-
 /* prototypes */
-static void cur_display(Mcdb *sprite, MCS *savebuf, WORD x, WORD y);
-static void cur_replace(MCS *savebuf);
 static void vb_draw(void);             /* user button vector */
 
 /* prototypes for functions in vdi_asm.S */
-extern void mouse_int(void);    /* mouse interrupt routine */
-extern void wheel_int(void);    /* wheel interrupt routine */
-extern void mov_cur(void);      /* user button vector */
+void mouse_int(void);           /* mouse interrupt routine */
+void mov_cur(void);             /* user button vector */
 
+#if CONF_WITH_EXTENDED_MOUSE
+void wheel_int(void);           /* wheel interrupt routine */
+void call_user_but(WORD status);/* call user_but from C */
+void call_user_wheel(WORD wheel_number, WORD wheel_amount); /* call user_wheel from C */
 
-/* FIXME: should go to linea variables */
-void     (*user_wheel)(void);   /* user provided mouse wheel vector */
-PFVOID old_statvec;             /* original IKBD status packet routine */
-
+/* pointers to callbacks called from vdi_asm.S */
+PFVOID user_wheel;  /* user mouse wheel vector provided by vdi_vex_wheelv() */
+PFVOID old_statvec; /* original IKBD status packet routine */
+#endif
 
 #if !WITH_AES
 /* Default Mouse Cursor Definition */
@@ -108,15 +108,6 @@ static const MFORM arrow_mform = {
 
 
 /*
- * do_nothing - doesn't do much  :-)
- */
-static void do_nothing(void)
-{
-}
-
-
-
-/*
  * dis_cur - Displays the mouse cursor if the number of hide
  *           operations has gone back to 0.
  *
@@ -134,7 +125,7 @@ static void dis_cur(void)
     HIDE_CNT -= 1;              /* decrement hide operations counter */
     if (HIDE_CNT == 0) {
         cur_display(&mouse_cdb, mcs_ptr, GCURX, GCURY);  /* display the cursor */
-        draw_flag = 0;          /* disable vbl drawing routine */
+        draw_flag = 0;          /* disable VBL drawing routine */
     }
     else if (HIDE_CNT < 0) {
         HIDE_CNT = 0;           /* hide counter should not become negative */
@@ -168,7 +159,7 @@ static void hide_cur(void)
     HIDE_CNT += 1;              /* increment it */
     if (HIDE_CNT == 1) {        /* if cursor was not hidden... */
         cur_replace(mcs_ptr);   /* remove the cursor from screen */
-        draw_flag = 0;          /* disable vbl drawing routine */
+        draw_flag = 0;          /* disable VBL drawing routine */
     }
 
     mouse_flag -= 1;            /* re-enable mouse drawing */
@@ -358,20 +349,6 @@ void vdi_vq_mouse(Vwk * vwk)
 
 
 /*
- * VALUATOR_INPUT: implements vrq_valuator()/vsm_valuator()
- *
- * These functions return the status of the logical 'valuator' device.
- * The "GEM Programmer's Guide: VDI" indicates that these functions
- * are not required, and both Atari TOS and EmuTOS (using the original
- * imported DRI source) implement them as dummy functions.
-*/
-void vdi_v_valuator(Vwk * vwk)
-{
-}
-
-
-
-/*
  * vdi_vex_butv
  *
  * This routine replaces the mouse button change vector with
@@ -387,11 +364,8 @@ void vdi_v_valuator(Vwk * vwk)
  */
 void vdi_vex_butv(Vwk * vwk)
 {
-    LONG * pointer;
-
-    pointer = (LONG*)&CONTRL[9];
-    *pointer = (LONG)user_but;
-    user_but = (void (*)(void)) *--pointer;
+    ULONG_AT(&CONTRL[9]) = (ULONG) user_but;
+    user_but = (PFVOID) ULONG_AT(&CONTRL[7]);
 }
 
 
@@ -411,11 +385,8 @@ void vdi_vex_butv(Vwk * vwk)
  */
 void vdi_vex_motv(Vwk * vwk)
 {
-    LONG * pointer;
-
-    pointer = (LONG*) &CONTRL[9];
-    *pointer = (LONG) user_mot;
-    user_mot = (void (*)(void)) *--pointer;
+    ULONG_AT(&CONTRL[9]) = (ULONG) user_mot;
+    user_mot = (PFVOID) ULONG_AT(&CONTRL[7]);
 }
 
 
@@ -437,16 +408,13 @@ void vdi_vex_motv(Vwk * vwk)
  */
 void vdi_vex_curv(Vwk * vwk)
 {
-    LONG * pointer;
-
-    pointer = (LONG*) &CONTRL[9];
-    *pointer = (LONG) user_cur;
-    user_cur = (void (*)(void)) *--pointer;
+    ULONG_AT(&CONTRL[9]) = (ULONG) user_cur;
+    user_cur = (PFVOID) ULONG_AT(&CONTRL[7]);
 }
 
 
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 /*
  * vdi_vex_wheelv: a Milan VDI extension
  *
@@ -464,11 +432,8 @@ void vdi_vex_curv(Vwk * vwk)
  */
 void vdi_vex_wheelv(Vwk * vwk)
 {
-    LONG * pointer;
-
-    pointer = (LONG*) &CONTRL[9];
-    *pointer = (LONG) user_wheel;
-    user_wheel = (void (*)(void)) *--pointer;
+    ULONG_AT(&CONTRL[9]) = (ULONG) user_wheel;
+    user_wheel = (PFVOID) ULONG_AT(&CONTRL[7]);
 }
 #endif
 
@@ -547,6 +512,8 @@ void vdi_vsc_form(Vwk * vwk)
 
 
 
+#if CONF_WITH_EXTENDED_MOUSE
+
 /*
  * vdi_mousex_handler - Handle additional mouse buttons
  */
@@ -580,6 +547,8 @@ static void vdi_mousex_handler (WORD scancode)
         call_user_wheel(1, 1);
 }
 
+#endif /* CONF_WITH_EXTENDED_MOUSE */
+
 
 
 /*
@@ -590,7 +559,6 @@ static void vdi_mousex_handler (WORD scancode)
  */
 void vdimouse_init(void)
 {
-    struct kbdvecs *kbd_vectors;
     static const struct {
         UBYTE topmode;
         UBYTE buttons;
@@ -609,10 +577,12 @@ void vdimouse_init(void)
     GCURX = xres / 2;           /* initialize the mouse to center */
     GCURY = yres / 2;
 
-    user_but = do_nothing;
-    user_mot = do_nothing;
+    user_but = just_rts;
+    user_mot = just_rts;
     user_cur = mov_cur;         /* initialize user_cur vector */
-    user_wheel = do_nothing;
+#if CONF_WITH_EXTENDED_MOUSE
+    user_wheel = just_rts;
+#endif
 
     /* Move in the default mouse form (presently the arrow) */
     set_mouse_form(default_mform(), &mouse_cdb);
@@ -624,16 +594,19 @@ void vdimouse_init(void)
     newx = 0;                   /* set cursor x-coordinate to 0 */
     newy = 0;                   /* set cursor y-coordinate to 0 */
 
-    /* vblqueue points to start of vbl_list[] */
-    *vblqueue = (LONG)vb_draw;   /* set GEM VBL-routine to vbl_list[0] */
+    vblqueue[0] = vb_draw;      /* set GEM VBL-routine to the first VBL slot */
 
     /* Initialize mouse via XBIOS in relative mode */
     Initmous(1, (LONG)&mouse_params, (LONG)mouse_int);
 
-    kbd_vectors = (struct kbdvecs *)Kbdvbase();
-    old_statvec = kbd_vectors->statvec;
-    kbd_vectors->statvec = wheel_int;
-    mousexvec = vdi_mousex_handler;
+#if CONF_WITH_EXTENDED_MOUSE
+    {
+        struct kbdvecs *kbd_vectors = (struct kbdvecs *)Kbdvbase();
+        old_statvec = kbd_vectors->statvec;
+        kbd_vectors->statvec = wheel_int;
+        mousexvec = vdi_mousex_handler;
+    }
+#endif
 }
 
 
@@ -643,22 +616,24 @@ void vdimouse_init(void)
  */
 void vdimouse_exit(void)
 {
-    LONG * pointer;             /* help for storing LONGs in INTIN */
-    struct kbdvecs *kbd_vectors;
+    user_but = just_rts;
+    user_mot = just_rts;
+    user_cur = just_rts;
+#if CONF_WITH_EXTENDED_MOUSE
+    user_wheel = just_rts;
+#endif
 
-    user_but = do_nothing;
-    user_mot = do_nothing;
-    user_cur = do_nothing;
-    user_wheel = do_nothing;
-
-    pointer = vblqueue;         /* vblqueue points to start of vbl_list[] */
-    *pointer = (LONG)vb_draw;   /* set GEM VBL-routine to vbl_list[0] */
+    vblqueue[0] = vb_draw;      /* set GEM VBL-routine to the first VBL slot */
 
     /* disable mouse via XBIOS */
     Initmous(0, 0, 0);
 
-    kbd_vectors = (struct kbdvecs *)Kbdvbase();
-    kbd_vectors->statvec = old_statvec;
+#if CONF_WITH_EXTENDED_MOUSE
+    {
+        struct kbdvecs *kbd_vectors = (struct kbdvecs *)Kbdvbase();
+        kbd_vectors->statvec = old_statvec;
+    }
+#endif
 }
 
 
@@ -802,7 +777,7 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
  * is subject to left or right clipping, however, then it must lie
  * within one screen word (per plane), so we only save 32 bytes/plane.
  */
-static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
+void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 {
     int row_count, plane, inc, op, dst_inc;
     UWORD * addr, * mask_start;
@@ -951,7 +926,7 @@ static void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
  *      v_planes    number of planes in destination
  *      v_lin_wr    line wrap (byte width of form)
  */
-static void cur_replace (MCS *mcs)
+void cur_replace (MCS *mcs)
 {
     WORD plane, row;
     UWORD *addr, *src, *dst;
@@ -999,21 +974,6 @@ static void cur_replace (MCS *mcs)
 
 
 /* line-A support */
-
-/* set by linea.S */
-WORD sprite_x, sprite_y;
-Mcdb *sprite_def;
-MCS *sprite_sav;
-
-void draw_sprite(void)
-{
-    cur_display(sprite_def, sprite_sav, sprite_x, sprite_y);
-}
-
-void undraw_sprite(void)
-{
-    cur_replace(sprite_sav);
-}
 
 void linea_show_mouse(void)
 {

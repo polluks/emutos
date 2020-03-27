@@ -1,7 +1,7 @@
 /*
  * dmasound.c - STe/TT/Falcon DMA sound routines
  *
- * Copyright (C) 2011-2017 The EmuTOS development team
+ * Copyright (C) 2011-2019 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -13,11 +13,9 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "dmasound.h"
 #include "vectors.h"
-#include "kprint.h"
 #include "gemerror.h"
 #include "delay.h"
 #include "asm.h"

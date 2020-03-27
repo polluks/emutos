@@ -27,7 +27,8 @@ msgstr ""
 #: bios/bios.c
 msgid ""
 "System halted!\n"
-msgstr "’¦ ©ç©«£˜ §ášà©œ!\n"
+msgstr ""
+"’¦ ©ç©«£˜ §ášà©œ!\n"
 
 #: bios/initinfo.c
 msgid "GEMDOS drives"
@@ -37,7 +38,7 @@ msgstr "Drives «¦¬ GEMDOS"
 msgid "MB"
 msgstr "MB"
 
-#: bios/initinfo.c
+#: bios/initinfo.c desk/deskinf.c
 msgid "KB"
 msgstr "KB"
 
@@ -176,7 +177,7 @@ msgid "[2]["
 msgstr "[2]["
 "† œ­˜¨£¦šã ›œ¤ ™¨ã¡œ|"
 "«¦ ­á¡œ¢¦ ã «¦ ˜¨®œå¦ §¦¬|"
-"§¨¦©§˜Ÿã©˜«œ ¤˜ ˜¤¦å¥œ«œ][  OK  ]"
+"§¨¦©§˜Ÿã©˜«œ ¤˜ ˜¤¦å¥œ«œ][  ‰  ]"
 
 #: aes/gem_rsc.c
 msgid "[1]["
@@ -240,7 +241,7 @@ msgid "[1]["
 "this directory][  OK  ]"
 msgstr "[1]["
 "ƒœ¤ œ§˜¨¡œå  £¤ã£ š ˜|"
-"˜¬«æ¤ «¦¤ ¡˜«á¢¦š¦][  OK  ]"
+"˜¬«æ¤ «¦¤ ¡˜«á¢¦š¦][  ‰  ]"
 
 #: aes/gem_rsc.c
 msgid "ITEM SELECTOR"
@@ -339,6 +340,10 @@ msgid "Copy's name: ________.___"
 msgstr "î¤¦£˜ ˜¤« š¨á­¦¬: ________.___"
 
 #: desk/desk_rsc.c
+msgid "Free memory: ___________________"
+msgstr "„¢œçŸœ¨ £¤ã£: ___________________"
+
+#: desk/desk_rsc.c
 msgid "Label: ________.___"
 msgstr "„« ¡â«˜: ________.___"
 
@@ -363,44 +368,44 @@ msgid "  Desktop info..."
 msgstr "  ¢¨¦­¦¨åœª Desktop..."
 
 #: desk/desk_rsc.c
-msgid "  Open            ^O"
-msgstr "  ê¤¦ š£˜                    ^O"
+msgid "  Open"
+msgstr "  ê¤¦ š£˜"
 
 #: desk/desk_rsc.c
-msgid "  Info/Rename...  ^I"
-msgstr "  ¢¨¦­¦¨åœª/‹œ«¦¤¦£˜©å˜... ^I"
+msgid "  Info/Rename..."
+msgstr "  ¢¨¦­¦¨åœª/‹œ«¦¤¦£˜©å˜..."
 
 #: desk/desk_rsc.c
-msgid "  New Folder...   ^N"
-msgstr "  Nâ¦ª ”á¡œ¢¦ª...            ^N"
+msgid "  New Folder..."
+msgstr "  Nâ¦ª ”á¡œ¢¦ª..."
 
 #: desk/desk_rsc.c
-msgid "  Close           ^U"
-msgstr "  ‰¢œå© £¦                   ^U"
+msgid "  Close"
+msgstr "  ‰¢œå© £¦"
 
 #: desk/desk_rsc.c
-msgid "  Close window    ^W"
-msgstr "  ‰¢œå© £¦ §˜¨˜Ÿç¨¦¬         ^W"
+msgid "  Close window"
+msgstr "  ‰¢œå© £¦ §˜¨˜Ÿç¨¦¬"
 
 #: desk/desk_rsc.c
 msgid "  Set file mask..."
 msgstr "  ¨ ©£æª £á©¡˜ª ˜¨®œå¦¬..."
 
 #: desk/desk_rsc.c
-msgid "  Delete...       ^D"
-msgstr "  ƒ ˜š¨˜­ã...                ^D"
+msgid "  Delete..."
+msgstr "  ƒ ˜š¨˜­ã..."
 
 #: desk/desk_rsc.c
 msgid "  Format..."
 msgstr "  ƒ ˜£æ¨­à©..."
 
 #: desk/desk_rsc.c
-msgid "  Execute EmuCON  ^Z"
-msgstr "  „¡«â¢œ© EmuCON            ^Z"
+msgid "  Execute EmuCON"
+msgstr "  „¡«â¢œ© EmuCON"
 
 #: desk/desk_rsc.c
-msgid "  Shutdown        ^Q"
-msgstr "  ’œ¨£˜« ©£æª                ^Q"
+msgid "  Shutdown"
+msgstr "  ’œ¨£˜« ©£æª"
 
 #: desk/desk_rsc.c
 msgid "  Show as icons"
@@ -459,20 +464,20 @@ msgid "  Desktop configuration..."
 msgstr "  ƒ ˜£æ¨­à© Desktop..."
 
 #: desk/desk_rsc.c
-msgid "  Change resolution...  ^R"
-msgstr "  €¢¢˜šã ˜¤á¢¬©ª...     ^R"
+msgid "  Change resolution..."
+msgstr "  €¢¢˜šã ˜¤á¢¬©ª..."
 
 #: desk/desk_rsc.c
-msgid "  Save desktop...       ^S"
-msgstr "  €§¦Ÿã¡œ¬© desktop...  ^S"
+msgid "  Read .INF file..."
+msgstr "  €¤áš¤à© ˜¨®œå¦¬ .INF..."
+
+#: desk/desk_rsc.c
+msgid "  Save desktop..."
+msgstr "  €§¦Ÿã¡œ¬© desktop..."
 
 #: desk/desk_rsc.c
 msgid "  Blitter"
 msgstr "  Blitter"
-
-#: desk/desk_rsc.c
-msgid "Attribute:"
-msgstr "ˆ› æ««œª:"
 
 #: desk/desk_rsc.c
 msgid "Read/Write"
@@ -611,6 +616,10 @@ msgid "NEW FOLDER"
 msgstr "Œ„‘ ”€‰„Š‘"
 
 #: desk/desk_rsc.c
+msgid "PRINT FILE"
+msgstr "„‰’“—‘† €•„ˆ“"
+
+#: desk/desk_rsc.c
 msgid "SET PREFERENCES"
 msgstr "’ˆ‹†‘„ˆ‘"
 
@@ -703,6 +712,10 @@ msgid "Input parameter:"
 msgstr "˜¨á£œ«¨¦  œ ©æ›¦¬"
 
 #: desk/desk_rsc.c
+msgid "Function keys:"
+msgstr "¦Ÿ« ¡á §¢ã¡«¨˜:"
+
+#: desk/desk_rsc.c
 msgid "SET SCREEN RESOLUTION"
 msgstr "€Œ€Š“‘† ‡Œ†‘"
 
@@ -759,6 +772,22 @@ msgid "Monochrome only"
 msgstr "‹¦¤æ®¨à£¦ £æ¤¦"
 
 #: desk/desk_rsc.c
+msgid "FORMAT FLOPPY DISKETTE"
+msgstr "ƒˆ€‹”—‘† ƒˆ‘‰„’€‘"
+
+#: desk/desk_rsc.c
+msgid "Single sided"
+msgstr "‹¦¤ã §¢œ¬¨á"
+
+#: desk/desk_rsc.c
+msgid "Double sided"
+msgstr "ƒ §¢ã §¢œ¬¨á"
+
+#: desk/desk_rsc.c
+msgid "High density"
+msgstr "“¯¢ã §¬¡¤æ««˜"
+
+#: desk/desk_rsc.c
 msgid "SET BACKGROUND"
 msgstr "ˆ‘‹‘ ”Œ’“"
 
@@ -777,22 +806,6 @@ msgstr "‘«¬¢:"
 #: desk/desk_rsc.c
 msgid "Color:"
 msgstr "•¨é£˜"
-
-#: desk/desk_rsc.c
-msgid "FORMAT FLOPPY DISKETTE"
-msgstr "ƒˆ€‹”—‘† ƒˆ‘‰„’€‘"
-
-#: desk/desk_rsc.c
-msgid "Single sided"
-msgstr "‹¦¤ã §¢œ¬¨á"
-
-#: desk/desk_rsc.c
-msgid "Double sided"
-msgstr "ƒ §¢ã §¢œ¬¨á"
-
-#: desk/desk_rsc.c
-msgid "High density"
-msgstr "“¯¢ã §¬¡¤æ««˜"
 
 #: desk/desk_rsc.c
 msgid "%ld bytes used in %d items."
@@ -831,6 +844,10 @@ msgid "TRASH"
 msgstr "€ˆ‹€’€"
 
 #: desk/desk_rsc.c
+msgid "PRINTER"
+msgstr "„‰’“—’†‘"
+
+#: desk/desk_rsc.c
 msgid "-More-"
 msgstr "-œ¨ ©©æ«œ¨˜-"
 
@@ -847,6 +864,10 @@ msgid "Locate item"
 msgstr "„¤«¦§ ©£æª ˜¤« ¡œ £â¤¦¬"
 
 #: desk/desk_rsc.c
+msgid "Select .INF file"
+msgstr "„§ ¢â¥«œ â¤˜ ˜¨®œå¦ .INF"
+
+#: desk/desk_rsc.c
 msgid "[2]["
 "Switch resolution?][ Yes | No ]"
 msgstr "[2]["
@@ -854,9 +875,16 @@ msgstr "[2]["
 
 #: desk/desk_rsc.c
 msgid "[2]["
-"Show this document?][Show|Cancel]"
+"Show or print this document?][Show|Print|Cancel]"
 msgstr "[2]["
-"¨¦™¦¢ã ˜¨®œå¦¬;][¨¦™¦¢ã|€¡ç¨à©]"
+"¨¦™¦¢ã ã œ¡«ç§à© ˜¬«¦ç|"
+"«¦¬ âšš¨˜­¦¬;][¨¦™¦¢ã|„¡«ç§à©|ê¡¬¨¦]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Print error!][ Retry | Cancel ]"
+msgstr "[1]["
+"‘­á¢£˜ œ¡«ç§à©ª!][„§˜¤á¢¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -864,7 +892,7 @@ msgid "[1]["
 "associated application.][  OK  ]"
 msgstr "[1]["
 "€¬«æª ¦ «ç§¦ª ˜¨®œå¦¬ ›œ¤ â®œ |"
-"©¬©®œ« ©£â¤ œ­˜¨£¦šã][  OK  ]"
+"©¬©®œ« ©£â¤ œ­˜¨£¦šã][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -876,19 +904,19 @@ msgstr "[1]["
 "’¦ GEM ›œ¤ £§¦¨œå ¤˜ ˜¤¦å¥œ |"
 "á¢¢˜ §˜¨áŸ¬¨˜. ˜¨˜¡˜¢é|"
 "¡¢œå©«œ â¤˜ §˜¨áŸ¬¨¦ §¦¬ ›œ¤|"
-"®¨© £¦§¦ œå«œ.][  OK  ]"
+"®¨© £¦§¦ œå«œ.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
 "Illegal directory operation!][ Skip | Abort ]"
 msgstr "[1]["
-"‹ âš¡¬¨ ¢œ «¦¬¨šå˜ ¡˜«˜¢æš¦¬!][ ˜¨á¢œ ¯ | ê¡¬¨¦ ]"
+"‹ âš¡¬¨ ¢œ «¦¬¨šå˜ ¡˜«˜¢æš¦¬!][˜¨á¢œ ¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
 "Illegal operation!][  OK  ]"
 msgstr "[1]["
-"‹ âš¡¬¨ ¢œ «¦¬¨šå˜!][  OK  ]"
+"‹ âš¡¬¨ ¢œ «¦¬¨šå˜!][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[2]["
@@ -912,7 +940,7 @@ msgid "[1]["
 msgstr "[1]["
 "Š¬§¦ç£˜©«œ, «¦ desktop ›œ¤|"
 "£§¦¨œå ¤˜ œš¡˜«˜©«ã©œ  á¢¢˜|"
-"œ ¡¦¤å› ˜ ã œ­˜¨£¦šâª.][  OK  ]"
+"œ ¡¦¤å› ˜ ã œ­˜¨£¦šâª.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[2]["
@@ -932,7 +960,7 @@ msgid "[1]["
 msgstr "[1]["
 " ›å©¡¦ª %c: ›œ¤ â®œ |"
 "˜¨¡œ«æ ®é¨¦ š ˜ ˜¬«ã|"
-"« ¢œ «¦¬¨šå˜][  OK  ]"
+"« ¢œ «¦¬¨šå˜][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[3]["
@@ -942,7 +970,7 @@ msgid "[3]["
 msgstr "[3]["
 "ƒœ¤ £§¦¨œå«œ ¤˜ ›£ ¦¬¨šã©œ«œ|"
 "­á¡œ¢¦ ã ¤˜ â®œ«œ §¨æ©™˜© «¦©¦|"
-"®˜£¢á ©« › ˜›¨¦£ã ¡˜«˜¢æš¦¬.][  OK  ]"
+"®˜£¢á ©« › ˜›¨¦£ã ¡˜«˜¢æš¦¬.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[3]["
@@ -955,7 +983,7 @@ msgstr "[3]["
 "ã ¤˜ â®œ«œ §¨æ©™˜© ©«¦ ˜¨®œå¦|"
 "ã «¦ ­á¡œ¢¦ £œ ˜¬«æ «¦ æ¤¦£˜|"
 "š ˜«å  › ˜›¨¦£ã œå¤˜  §¦¢ç|"
-"£œšá¢.][  OK  ]"
+"£œšá¢.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -965,7 +993,15 @@ msgid "[1]["
 msgstr "[1]["
 "%s ®¨© £¦§¦ œå«˜  š ˜|"
 "£æ¤ £ › ˜š¨˜­ã ˜¨®œåà¤|"
-"ã ­˜¡â¢à¤.][  OK  ]"
+"ã ­˜¡â¢à¤.][  ‰  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"%s|"
+"is a printer.][  OK  ]"
+msgstr "[1]["
+"† ©¬©¡œ¬ã %s|"
+"œå¤˜  œ¡«¬§à«ãª.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -975,13 +1011,13 @@ msgid "[1]["
 msgstr "[1]["
 "ƒœ¤ £§¦¨œå«œ ¤˜ ©ç¨œ«œ|"
 "œ­˜¨£¦šâª, ˜¨®œå˜ ã ­˜¡â¢¦¬ª|"
-"©«¤ œ§ ­á¤œ ˜ œ¨š˜©å˜ª.][  OK  ]"
+"©«¤ œ§ ­á¤œ ˜ œ¨š˜©å˜ª.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[2]["
 "Save Desktop?][  OK  |Cancel]"
 msgstr "[2]["
-"€§¦Ÿã¡œ¬© Desktop;][  OK  |ê¡¬¨¦]"
+"€§¦Ÿã¡œ¬© Desktop;][  ‰  |ê¡¬¨¦]"
 
 #: desk/desk_rsc.c
 msgid "[2]["
@@ -995,7 +1031,7 @@ msgstr "[2]["
 msgid "[1]["
 "Invalid function key value.][  OK  ]"
 msgstr "[1]["
-"ê¡¬¨ « £ã function key.][  OK  ]"
+"ê¡¬¨ « £ã function key.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[2]["
@@ -1004,7 +1040,7 @@ msgid "[2]["
 msgstr "[2]["
 "’¦ Function key â®œ  ã›|"
 "˜¤˜«œŸœå. ‡â¢œ«œ ¤˜ «¦|"
-"œ§˜¤˜Ÿâ©œ«œ;][  OK  |Cancel]"
+"œ§˜¤˜Ÿâ©œ«œ;][  ‰  |ê¡¬¨¦]"
 
 #: desk/desk_rsc.c
 msgid "[3]["
@@ -1038,7 +1074,7 @@ msgstr "[1]["
 msgid "[1]["
 "No matching file type.][  OK  ]"
 msgstr "[1]["
-"‹ «˜ ¨ ˜©«æª «ç§¦ª ˜¨®œå¦¬.][  OK  ]"
+"‹ «˜ ¨ ˜©«æª «ç§¦ª ˜¨®œå¦¬.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[3]["
@@ -1068,7 +1104,7 @@ msgstr "[1]["
 msgid "[1]["
 "No drive identifier.][ Retry ]"
 msgstr "[1]["
-"•à¨åª ˜¤˜š¤à¨ ©« ¡æ ›å©¡¦¬.][ „§˜¤á¢¯ ]"
+"•à¨åª ˜¤˜š¤à¨ ©« ¡æ ›å©¡¦¬.][„§˜¤á¢¯]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1076,25 +1112,27 @@ msgid "[1]["
 "%s][ Skip | Retry | Abort ]"
 msgstr "[1]["
 "€›¬¤˜£å˜ › ˜š¨˜­ãª «¦¬ ˜¨®œå¦¬|"
-"%s][ ˜¨á¢œ ¯ | „§˜¤á¢¯ | ê¡¬¨¦ ]"
+"%s][˜¨á¢œ ¯|„§˜¤á¢¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
 "Cannot delete directory|"
 "%s][ Skip | Retry | Abort ]"
-msgstr "€›¬¤˜£å˜ › ˜š¨˜­ãª «¦¬ ­˜¡â¢¦¬ |%s][ ˜¨á¢œ ¯ | „§˜¤á¢¯ | ê¡¬¨¦ ]"
+msgstr "[1]["
+"€›¬¤˜£å˜ › ˜š¨˜­ãª «¦¬ ­˜¡â¢¦¬ |"
+"%s][˜¨á¢œ ¯|„§˜¤á¢¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
 "Not enough memory.][  OK  ]"
 msgstr "[1]["
-"ƒœ¤ œ§˜¨¡œå  £¤ã£.][  OK  ]"
+"ƒœ¤ œ§˜¨¡œå  £¤ã£.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
 "%s not found.][  OK  ]"
 msgstr "[1]["
-"’¦ %s ›œ¤ ™¨âŸ¡œ.][  OK  ]"
+"’¦ %s ›œ¤ ™¨âŸ¡œ.][  ‰  ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1102,7 +1140,7 @@ msgid "[1]["
 "%s][ Skip | Retry | Abort ]"
 msgstr "[1]["
 "€›¬¤˜£å˜ ­æ¨«à©ª «¦¬ ˜¨®œå¦¬ |"
-"%s][ ˜¨á¢œ ¯ | „§˜¤á¢¯ | ê¡¬¨¦ ]"
+"%s][˜¨á¢œ ¯|„§˜¤á¢¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1110,7 +1148,7 @@ msgid "[1]["
 "%s][ Skip | Retry | Abort ]"
 msgstr "[1]["
 "€›¬¤˜£å˜ ›£ ¦¬¨šå˜ª «¦¬ ˜¨®œå¦¬|"
-"%s][ ˜¨á¢œ ¯ | „§˜¤á¢¯ | ê¡¬¨¦ ]"
+"%s][˜¨á¢œ ¯|„§˜¤á¢¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1118,7 +1156,7 @@ msgid "[1]["
 "%s][ Skip | Abort ]"
 msgstr "[1]["
 "€›¬¤˜£å˜ ˜¤áš¤à©ª «¦¬ ˜¨®œå¦¬|"
-"%s][ ˜¨á¢œ ¯ | ê¡¬¨¦ ]"
+"%s][˜¨á¢œ ¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1126,13 +1164,13 @@ msgid "[1]["
 "%s][ Skip | Abort ]"
 msgstr "[1]["
 "€›¬¤˜£å˜ œšš¨˜­ãª «¦¬ ˜¨®œå¦¬|"
-"%s][ ˜¨á¢œ ¯ | ê¡¬¨¦ ]"
+"%s][˜¨á¢œ ¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
 "Rename error!][ Retry | Cancel ]"
 msgstr "[1]["
-"‘­á¢£˜ £œ«¦¤¦£˜©å˜ª!][ „§˜¤á¢¯ | ê¡¬¨¦ ]"
+"‘­á¢£˜ £œ«¦¤¦£˜©å˜ª!][„§˜¤á¢¯| ê¡¬¨¦ ]"
 
 #: desk/desk_rsc.c
 msgid "[1]["
@@ -1140,7 +1178,13 @@ msgid "[1]["
 "directory.][  OK  ]"
 msgstr "[1]["
 "€§¦«¬®å˜ ¦¨ ©£¦ç §¨¦œ§ ¢œš£â¤¦¬ |"
-"¡˜«˜¢æš¦¬.][  OK  ]"
+"¡˜«˜¢æš¦¬.][  ‰  ]"
+
+#: desk/desk_rsc.c
+msgid "[1]["
+"Illegal .INF file format.][  OK  ]"
+msgstr "[1]["
+"‹ âš¡¬¨¦ ˜¨®œå¦ .INF.][  ‰  ]"
 
 #: cli/cmdint.c
 msgid "Copy <filespec> ... to standard output"
@@ -1295,8 +1339,8 @@ msgid "left/right arrow = previous/next character"
 msgstr "left/right arrow = previous/next character"
 
 #: cli/cmdint.c
-msgid "shift-left/right arrow = previous/next word"
-msgstr "shift-left/right arrow = previous/next word"
+msgid "control-left/right arrow = previous/next word"
+msgstr "control-left/right arrow = previous/next word"
 
 #: cli/cmdint.c
 msgid "invalid mode argument"

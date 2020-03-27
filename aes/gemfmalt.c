@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -18,11 +18,12 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "struct.h"
 #include "obdefs.h"
 #include "intmath.h"
+#include "aesdefs.h"
+#include "aesext.h"
 #include "gemlib.h"
 #include "gem_rsc.h"
 
@@ -36,7 +37,6 @@
 #include "gemwmlib.h"
 #include "rectfunc.h"
 #include "gemfmalt.h"
-#include "kprint.h"
 
 /* TOS standard form_alert() maximum values */
 #define TOS_MAX_LINELEN 32

@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -19,12 +19,10 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "string.h"
 #include "obdefs.h"
 #include "gsxdefs.h"
-#include "dos.h"
 #include "gemdos.h"
 #include "rectfunc.h"
 #include "optimize.h"
@@ -33,9 +31,9 @@
 #include "xbiosbind.h"
 #include "gemerror.h"
 
+#include "aesdefs.h"
 #include "deskbind.h"
 #include "deskglob.h"
-#include "gembind.h"
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
@@ -52,11 +50,8 @@
 #include "deskobj.h"
 #include "nls.h"
 #include "scancode.h"
-#include "../bios/machine.h"
-#include "kprint.h"
-
-
-#define ALLFILES    (F_SUBDIR|F_SYSTEM|F_HIDDEN)
+#include "biosext.h"
+#include "lineavars.h"      /* for MOUSE_BT */
 
 
 #if CONF_WITH_FORMAT
@@ -69,7 +64,6 @@
 #define RANDOM_SERIAL   0x01000000L
 #define WRITESEC        0x03        /* no media change detection */
 #define FA_VOL          0x08        /* volume label attribute */
-#define SECTOR_SIZE     512L
 
 static const WORD std_skewtab[] =
  { 1, 2, 3, 4, 5, 6, 7, 8, 9,
@@ -81,9 +75,18 @@ static const WORD hd_skewtab[] =
 
 #endif
 
+#if CONF_WITH_SHOW_FILE || CONF_WITH_PRINTER_ICON
+/*
+ *      declarations used by show_file() or print_file()
+ */
+#define SETPRT_SERIAL   0x10    /* bit set by Setprt() to request serial o/p */
+#define FF              0x0c    /* standard form feed code */
+#define CHECK_COUNT     16      /* how often to check keyboard when printing */
+#endif
+
 #if CONF_WITH_SHOW_FILE
 /*
- *      declarations used by the show_file() code
+ *      declarations used by show_file() only
  */
 #define IOBUFSIZE   16384L
 static LONG linecount;
@@ -295,9 +298,9 @@ void do_wopen(WORD new_win, WORD wh, WORD curr, WORD x, WORD y, WORD w, WORD h)
 
 
 /*
- * returns TRUE iff window has grown
+ * implements FULLER widget
  */
-WORD do_wfull(WORD wh)
+void do_wfull(WORD wh)
 {
     GRECT curr, prev, full;
 
@@ -310,14 +313,12 @@ WORD do_wfull(WORD wh)
         wind_set_grect(wh, WF_CXYWH, &prev);
         graf_shrinkbox(prev.g_x, prev.g_y, prev.g_w, prev.g_h,
                         full.g_x, full.g_y, full.g_w, full.g_h);
-        return 0;
+        return;
     }
 
     graf_growbox(curr.g_x, curr.g_y, curr.g_w, curr.g_h,
                 full.g_x, full.g_y, full.g_w, full.g_h);
     wind_set_grect(wh, WF_CXYWH, &full);
-
-    return 1;
 }
 
 
@@ -332,6 +333,8 @@ static DTA *file_exists(char *path, char *name)
     WORD rc;
     char fullname[MAXPATHLEN];
 
+    desk_busy_on();     /* display busy, in case we're on a slow drive (floppy) */
+
     strcpy(fullname, path);
     if (name)
         strcpy(filename_start(fullname),name);
@@ -339,6 +342,8 @@ static DTA *file_exists(char *path, char *name)
     dos_sdta(&G.g_wdta);
     rc = dos_sfirst(fullname, ALLFILES);
     dos_sdta(dta);
+
+    desk_busy_off();
 
     return rc ? NULL : &G.g_wdta;
 }
@@ -348,7 +353,7 @@ static DTA *file_exists(char *path, char *name)
 /*
  *  Prompt to Remove or Locate a shortcut
  */
-static void remove_locate_shortcut(WORD curr)
+void remove_locate_shortcut(WORD curr)
 {
     WORD rc, button;
     ANODE *pa;
@@ -359,7 +364,7 @@ static void remove_locate_shortcut(WORD curr)
     if (!pa)        /* can't happen */
         return;
 
-    rc = fun_alert_string(1, STRMVLOC, filename_start(pa->a_pdata));
+    rc = fun_alert_merge(1, STRMVLOC, filename_start(pa->a_pdata));
     switch(rc)
     {
     case 1:             /* Remove */
@@ -369,7 +374,7 @@ static void remove_locate_shortcut(WORD curr)
     case 2:             /* Locate */
         build_root_path(path, 'A'+G.g_stdrv);
         fname[0] = '\0';
-        rsrc_gaddr_rom(R_STRING, STLOCATE, (void **)&p);
+        p = desktop_str_addr(STLOCATE);
         rc = fsel_exinput(path, fname, &button, p);
         if ((rc == 0) || (button == 0))
             break;
@@ -396,13 +401,13 @@ WORD do_diropen(WNODE *pw, WORD new_win, WORD curr_icon,
     WORD ret;
 
     /* convert to hourglass */
-    graf_mouse(HGLASS, NULL);
+    desk_busy_on();
 
     /* open a path node */
     if (!pn_open(pathname, pw)) /* pathname is too long */
     {
         KDEBUG(("Pathname is too long\n"));
-        graf_mouse(ARROW, NULL);
+        desk_busy_off();
         return FALSE;
     }
 
@@ -412,7 +417,7 @@ WORD do_diropen(WNODE *pw, WORD new_win, WORD curr_icon,
     {
         KDEBUG(("Error reading directory %s\n",pathname));
         pn_close(&pw->w_pnode);
-        graf_mouse(ARROW, NULL);
+        desk_busy_off();
         return FALSE;
     }
 
@@ -437,15 +442,15 @@ WORD do_diropen(WNODE *pw, WORD new_win, WORD curr_icon,
     if (redraw && !new_win)
         fun_msg(WM_REDRAW, pw->w_id, pt->g_x, pt->g_y, pt->g_w, pt->g_h);
 
-    graf_mouse(ARROW, NULL);
+    desk_busy_off();
 
     return TRUE;
 }
 
 
-#if CONF_WITH_SHOW_FILE
+#if CONF_WITH_SHOW_FILE || CONF_WITH_PRINTER_ICON
 /*
- *  helper functions for displaying a file
+ *  helper functions for displaying or printing a file
  */
 
 /*
@@ -465,24 +470,15 @@ static WORD bios_conis(void)
 }
 
 /*
- *  send a character via the BIOS
+ *  send a character to the printer
  */
-static void bios_conout(WORD ch)
+static WORD bios_prnout(WORD device, WORD ch)
 {
-    Bconout(2, ch);
+    return Bconout(device, ch);
 }
 
 /*
- *  send a string via the BIOS
- */
-static void bios_conws(const char *s)
-{
-    while(*s)
-        Bconout(2, *s++);
-}
-
-/*
- *  get key from keyboard
+ *  get key from keyboard, or equivalent mouse button
  *
  *  if ASCII (1-255), returns value in low-order byte, 0 in high-order byte
  *  else returns scancode
@@ -490,6 +486,14 @@ static void bios_conws(const char *s)
 static WORD get_key(void)
 {
     ULONG c;
+
+    while(!bios_conis())
+    {
+        if (MOUSE_BT & 0x0002)  /* right mouse button means quit */
+            return 'Q';
+        if (MOUSE_BT & 0x0001)  /* left mouse button means next page */
+            return ' ';
+    }
 
     c = bios_conin();
 
@@ -502,18 +506,21 @@ static WORD get_key(void)
 }
 
 /*
- *  check for flow control or quit (ctl-C/Q/q)
+ *  check for quit (ctl-C/Q/q/UNDO) and (optionally) handle flow control
  *
  *  a +ve argument is the character to check
  *  a -ve argument means get the character from the console
  */
-static WORD user_input(WORD c)
+static WORD user_input(WORD c, BOOL flow_control)
 {
     if (c < 0)
         c = get_key();
 
     if ((c == CTL_C) || (c == 'Q') || (c == 'q') || (c == UNDO))    /* wants to quit */
         return -1;
+
+    if (!flow_control)
+        return 0;
 
     if (c == CTL_S)         /* user wants to pause */
     {
@@ -528,6 +535,129 @@ static WORD user_input(WORD c)
     }
 
     return 0;
+}
+
+/*
+ *  return TRUE iff user wants to quit printing this file
+ */
+static BOOL user_quit(void)
+{
+    if (bios_conis())
+        if (user_input(-1, FALSE) < 0)  /* no flow control */
+            return TRUE;
+
+    return FALSE;
+}
+
+/*
+ *  print a fixed-length buffer
+ *
+ *  returns +1 if user interrupt or quit
+ *          0 otherwise
+ */
+static WORD print_buf(WORD device,const char *s,LONG len)
+{
+    WORD charcount = 0;
+    char c;
+
+    while(len-- > 0)
+    {
+        /* like Atari TOS, only check for user input 'occasionally' */
+        if (++charcount > CHECK_COUNT)
+        {
+            charcount = 0;
+            if (user_quit())
+                return 1;
+        }
+
+        c = *s++;
+        while(bios_prnout(device, c) == 0)
+        {
+            desk_busy_off();
+            if (fun_alert(1, STPRTERR) != 1)    /* retry or cancel? */
+                return 1;
+            desk_busy_on();       /* we're busy again */
+        }
+    }
+
+    return 0;
+}
+
+/*
+ *  print a text file, allowing user cancel
+ *
+ *  returns FALSE iff user cancel
+ */
+BOOL print_file(char *name,LONG bufsize,char *iobuf)
+{
+    OBJECT *tree;
+    LONG rc, n;
+    WORD handle, device;
+
+    rc = dos_open(name,0);
+    if (rc < 0L)
+    {
+        form_error(2);  /* file not found */
+        return TRUE;
+    }
+
+    handle = (WORD)rc;
+
+    /* open dialog, set busy cursor */
+    tree = desk_rs_trees[ADPRINT];
+    set_tedinfo_name(tree, PRNAME, filename_start(name));
+    start_dialog(tree);
+
+    graf_mouse(HGLASS,NULL);    /* say we're busy */
+
+    /* determine whether to use serial or parallel port */
+    device = (Setprt(-1) & SETPRT_SERIAL) ? 1 : 0;
+
+    while(1)
+    {
+        n = rc = dos_read(handle,bufsize,iobuf);
+        if (rc <= 0L)
+            break;
+        rc = print_buf(device, iobuf, n);
+        if (rc > 0L)
+            break;
+    }
+
+    /* if not user cancel, do a form feed */
+    if (rc <= 0L)
+        bios_prnout(device, FF);
+
+    dos_close(handle);
+
+    /* close dialog, reset mouse cursor */
+    end_dialog(tree);
+    desk_busy_off();
+
+    return (rc > 0L) ? FALSE : TRUE;
+}
+#endif
+
+
+#if CONF_WITH_SHOW_FILE
+/*
+ *  helper functions for displaying a file
+ */
+
+/*
+ *  send a character via the BIOS
+ */
+static void bios_conout(WORD ch)
+{
+    Bconout(2, ch);
+}
+
+/*
+ *  send a string via the BIOS
+ */
+static void bios_conws(const char *s)
+{
+    while(*s)
+        Bconout(2, *s++);
 }
 
 /*
@@ -565,7 +695,7 @@ static WORD show_buf(const char *s,LONG len)
     while(n-- > 0)
     {
         if (bios_conis())
-            if (user_input(-1))
+            if (user_input(-1, TRUE))
                 return 1;
 
         c = *s++;
@@ -577,7 +707,7 @@ static WORD show_buf(const char *s,LONG len)
         {
             if (++linecount >= pagesize)
             {
-                rsrc_gaddr_rom(R_STRING,STMORE,(void **)&msg);
+                msg = desktop_str_addr(STMORE);
                 bios_conws(msg);            /* "-More-" */
                 while(1)
                 {
@@ -594,7 +724,7 @@ static WORD show_buf(const char *s,LONG len)
                         linecount = pagesize / 2;
                         break;
                     }
-                    if (user_input(response))
+                    if (user_input(response, TRUE))
                     {
                         bios_conout('\r');
                         return 1;
@@ -620,7 +750,10 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
 
     rc = dos_open(name,0);
     if (rc < 0L)
+    {
+        form_error(2);  /* file not found */
         return;
+    }
 
     handle = (WORD)rc;
 
@@ -631,7 +764,7 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
      * set up for text output
      */
     graf_mouse(M_OFF, NULL);
-    menu_bar(G.a_trees[ADMENU],0);
+    menu_bar(desk_rs_trees[ADMENU],0);
     wind_update(BEG_UPDATE);
     form_dial(FMD_START, 0,0,0,0, 0,0,scr_width,scr_height);
     clear_screen();
@@ -653,10 +786,11 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
 
     if (rc <= 0L)   /* not user quit */
     {
-        rsrc_gaddr_rom(R_STRING,(rc==0L)?STEOF:STFRE,(void **)&msg);
+        bios_conout('\n');
+        msg = desktop_str_addr((rc==0L)?STEOF:STFRE);
         blank_line();
         bios_conws(msg);    /* "-End of file-" or "-File read error-" */
-        bios_conin();
+        get_key();
     }
 
     /*
@@ -665,7 +799,7 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
     clear_screen();     /* neatness */
     form_dial(FMD_FINISH, 0,0,0,0, 0,0,scr_width,scr_height);
     wind_update(END_UPDATE);
-    menu_bar(G.a_trees[ADMENU],1);
+    menu_bar(desk_rs_trees[ADMENU],1);
     graf_mouse(M_ON, NULL);
 }
 #endif
@@ -677,6 +811,8 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
  *  This may be called via the Open item under the File menu, or by
  *  double-clicking an icon, or by pressing a function key, or by
  *  dropping a file on to a desktop shortcut for a program
+ *
+ *  returns TRUE iff shel_write() was issued successfully
  */
 WORD do_aopen(ANODE *pa, WORD isapp, WORD curr, char *pathname, char *pname, char *tail)
 {
@@ -758,8 +894,8 @@ WORD do_aopen(ANODE *pa, WORD isapp, WORD curr, char *pathname, char *pname, cha
      * see if application was selected directly or a
      * data file with an associated primary application
      */
-    G.g_cmd[0] = G.g_tail[1] = '\0';
-    ptail = G.g_tail + 1;   /* arguments go here */
+    G.g_work[1] = '\0';
+    ptail = G.g_work + 1;   /* arguments go here */
     ret = TRUE;
 
     if (installed_datafile)
@@ -816,12 +952,15 @@ WORD do_aopen(ANODE *pa, WORD isapp, WORD curr, char *pathname, char *pname, cha
              */
 #if CONF_WITH_SHOW_FILE
             ret = fun_alert(1, STSHOW);
-            if (ret == 1)   /* user said "Show" */
+            if (ret != 3)   /* user said "Show" or "Print" */
             {
                 char *iobuf = dos_alloc_anyram(IOBUFSIZE);
                 if (iobuf)
                 {
-                    show_file(app_path, IOBUFSIZE, iobuf);
+                    if (ret == 1)
+                        show_file(app_path, IOBUFSIZE, iobuf);
+                    else
+                        print_file(app_path, IOBUFSIZE, iobuf);
                     dos_free(iobuf);
                 }
                 else
@@ -843,11 +982,11 @@ WORD do_aopen(ANODE *pa, WORD isapp, WORD curr, char *pathname, char *pname, cha
          */
         if (!file_exists(pcmd, NULL))
         {
-            fun_alert_string(1, STFILENF, filename_start(pcmd));
-            return done;
+            fun_alert_merge(1, STFILENF, filename_start(pcmd));
+            return FALSE;
         }
-        strcpy(G.g_cmd, pcmd);  /* G.g_tail+1 is already set up */
-        done = pro_run(isgraf, 1, G.g_cwin, curr);
+        /* G.g_work+1 is already set up */
+        done = pro_run(isgraf, pcmd, G.g_work, G.g_cwin, curr);
     }
 
     return done;
@@ -999,50 +1138,27 @@ void do_fopen(WNODE *pw, WORD curr, char *pathname, WORD allow_new_win)
 
 
 /*
- *  Adds another folder to a pathname, assumed to be of the form:
- *      D:\X\Y\F.E
- *  where X,Y are folders and F.E is a filename.  In the above
- *  example, if the folder to be added was Z, this would change
- *  D:\X\Y\F.E to D:\X\Y\Z\F.E
- *
- *  Note: if the folder to be added is an empty string, we do nothing.
- *  This situation occurs when building the path string for a desktop
- *  shortcut that points to the root folder.
- *
- *  returns FALSE iff the resulting pathname would be too long
- */
-static BOOL add_one_level(char *pathname,char *folder)
-{
-    WORD plen, flen;
-    char filename[LEN_ZFNAME+1], *p;
-
-    flen = strlen(folder);
-    if (flen == 0)
-        return TRUE;
-
-    plen = strlen(pathname);
-    if (plen+flen+1 >= MAXPATHLEN)
-        return FALSE;
-
-    p = filename_start(pathname);
-    strcpy(filename,p);     /* save filename portion */
-    strcpy(p,folder);       /* & copy in folder      */
-    p += flen;
-    *p++ = '\\';            /* add the trailing path separator */
-    strcpy(p,filename);     /* & restore the filename          */
-    return TRUE;
-}
-
-
-/*
  *  Issue alert about the trash
  *
  *  The current name of the trash icon is obtained from the ANODE
  */
 static void trash_alert(ANODE *pa)
 {
-    fun_alert_string(1, STTRINFO, pa->a_pappl);
+    fun_alert_merge(1, STTRINFO, pa->a_pappl);
 }
+
+
+#if CONF_WITH_PRINTER_ICON
+/*
+ *  Issue alert about the printer
+ *
+ *  The current name of the printer icon is obtained from the ANODE
+ */
+static void printer_alert(ANODE *pa)
+{
+    fun_alert_merge(1, STPRINFO, pa->a_pappl);
+}
+#endif
 
 
 /*
@@ -1111,6 +1227,11 @@ WORD do_open(WORD curr)
     case AT_ISTRSH:
         trash_alert(pa);
         break;
+#if CONF_WITH_PRINTER_ICON
+    case AT_ISPRNT:
+        printer_alert(pa);
+        break;
+#endif
     }
 
     return FALSE;
@@ -1143,7 +1264,6 @@ WORD do_info(WORD curr)
     switch(pa->a_type)
     {
     case AT_ISFOLD:
-        /* drop thru */
     case AT_ISFILE:
         pw = win_find(G.g_cwin);
         if (pw)
@@ -1183,6 +1303,11 @@ WORD do_info(WORD curr)
     case AT_ISTRSH:
         trash_alert(pa);
         break;
+#if CONF_WITH_PRINTER_ICON
+    case AT_ISPRNT:
+        printer_alert(pa);
+        break;
+#endif
     }
 
     return ret;
@@ -1220,7 +1345,7 @@ static WORD init_start(char *buf, WORD disktype, WORD drive, char *label)
     /*
      * write FATs
      */
-    memset(buf, 0x00, bpb->fsiz*SECTOR_SIZE);
+    bzero(buf, bpb->fsiz*SECTOR_SIZE);
     buf[0] = 0xf9;
     buf[1] = 0xff;
     buf[2] = 0xff;
@@ -1232,7 +1357,7 @@ static WORD init_start(char *buf, WORD disktype, WORD drive, char *label)
     /*
      * write root dir, including label if present
      */
-    memset(buf, 0x00, bpb->rdlen*SECTOR_SIZE);
+    bzero(buf, bpb->rdlen*SECTOR_SIZE);
     if (label[0])
     {
         memset(buf, ' ', 11);
@@ -1358,7 +1483,7 @@ void do_format(void)
     WORD exitobj, rc;
     WORD max_width, incr;
 
-    tree = G.a_trees[ADFORMAT];
+    tree = desk_rs_trees[ADFORMAT];
 
     /*
      * enable button(s) for existent drives, disable for non-existent
@@ -1455,7 +1580,7 @@ void do_format(void)
             drive = (tree[FMT_DRVA].ob_state & SELECTED) ? 0 : 1;
             refresh_drive('A'+drive);           /* update relevant windows */
             dos_space(drive + 1, &total, &avail);
-            if (fun_alert_long(2, STFMTINF, avail) == 2)
+            if (fun_alert_merge(2, STFMTINF, avail) == 2)
                 rc = -1;
         }
         tree[FMT_BAR].ob_width = max_width;     /* reset to starting values */
@@ -1539,7 +1664,7 @@ ANODE *i_find(WORD wh, WORD item, FNODE **ppf, WORD *pisapp)
             if (item >= 0)
                 pf = G.g_screeninfo[item].fnptr;
             if (pf)
-                pa = app_afind_by_name((pf->f_attr&F_SUBDIR)?AT_ISFOLD:AT_ISFILE,
+                pa = app_afind_by_name((pf->f_attr&FA_SUBDIR)?AT_ISFOLD:AT_ISFILE,
                             AF_ISDESK|AF_WINDOW, pw->w_pnode.p_spec, pf->f_name, &isapp);
         }
     }
@@ -1573,18 +1698,17 @@ WORD set_default_path(char *path)
  */
 BOOL valid_drive(char drive)
 {
+    int drv = drive - 'A';
     char drvstr[2];
 
     drvstr[0] = drive;
     drvstr[1] = '\0';
 
-    drive -= 'A';
-
-    if ((drive >= 0) && (drive < BLKDEVNUM))
-        if (dos_sdrv(dos_gdrv()) & (1L << drive))
+    if ((drv >= 0) && (drv < BLKDEVNUM))
+        if (dos_sdrv(dos_gdrv()) & (1L << drv))
             return TRUE;
 
-    fun_alert_string(1, STNODRIV, drvstr);
+    fun_alert_merge(1, STNODRIV, drvstr);
 
     return FALSE;
 }
@@ -1596,4 +1720,22 @@ BOOL valid_drive(char drive)
 void malloc_fail_alert(void)
 {
     fun_alert(1, STMAFAIL);
+}
+
+
+/*
+ *  Change mouse to 'busy' indicator
+ */
+void desk_busy_on(void)
+{
+    graf_mouse(HGLASS, NULL);
+}
+
+
+/*
+ *  Change mouse to 'not busy' indicator
+ */
+void desk_busy_off(void)
+{
+    graf_mouse(ARROW, NULL);
 }

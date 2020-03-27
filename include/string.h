@@ -1,7 +1,7 @@
 /*
  * string.h - EmuTOS own copy of an ANSI standard header
  *
- * Copyright (C) 2001-2016 The EmuTOS development team
+ * Copyright (C) 2001-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -64,7 +64,10 @@ void * memmove(void * dst, const void * src,
 /* fills with byte c, returns the given address. */
 void * memset(void *address, int c, size_t size);
 
-/* clear memory */
+/* clear memory
+ * we use our own name to circumvent GCC converting bzero to memset
+ */
+#define bzero bzero_nobuiltin
 void bzero(void *address, size_t size);
 
 #endif /* STRING_H */

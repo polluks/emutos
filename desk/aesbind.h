@@ -1,7 +1,7 @@
 /*
  * EmuTOS desktop
  *
- * Copyright (C) 2002-2017 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -11,10 +11,6 @@
 #define _AESBIND_H
 #include "obdefs.h"
 
-#define END_UPDATE 0        /* for wind_update() */
-#define BEG_UPDATE 1
-#define END_MCTRL  2
-#define BEG_MCTRL  3
 
 /*
  * Application Manager
@@ -87,7 +83,9 @@ WORD form_do(OBJECT *form, WORD start);
 WORD form_dial(WORD dtype, WORD ix, WORD iy, WORD iw, WORD ih,
                WORD x, WORD y, WORD w, WORD h);
 WORD form_alert(WORD defbut, const char *astring);
-/* WORD form_error(WORD errnum); */
+#if CONF_WITH_SHOW_FILE || CONF_WITH_PRINTER_ICON
+WORD form_error(WORD errnum);
+#endif
 WORD form_center(OBJECT *tree, WORD *pcx, WORD *pcy, WORD *pcw, WORD *pch);
 /*
 WORD form_keybd(OBJECT *form, WORD obj, WORD nxt_obj, WORD thechar,
@@ -134,7 +132,7 @@ WORD scrp_write(const char *pscrap);
 /*
 WORD fsel_input(char *pipath, char *pisel, WORD *pbutton);
 */
-#if CONF_WITH_DESKTOP_SHORTCUTS
+#if CONF_WITH_DESKTOP_SHORTCUTS || CONF_WITH_READ_INF
 WORD fsel_exinput(char *pipath, char *pisel, WORD *pbutton, const char *title);
 #endif
 
@@ -154,6 +152,7 @@ WORD wind_find(WORD mx, WORD my);
 WORD wind_update(WORD beg_update);
 WORD wind_calc(WORD wctype, UWORD kind, WORD x, WORD y, WORD w, WORD h,
                WORD *px, WORD *py, WORD *pw, WORD *ph);
+WORD wind_new(void);
 
 
 /*

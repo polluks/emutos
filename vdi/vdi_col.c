@@ -1,21 +1,19 @@
 /*
  * vdi_col.c - VDI color palette functions and tables.
  *
- * Copyright (C) 2005-2018 The EmuTOS development team
+ * Copyright (C) 2005-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "intmath.h"
 #include "vdi_defs.h"
 #include "string.h"
-#include "../bios/machine.h"
+#include "has.h"
 #include "xbiosbind.h"
-#include "../bios/lineavars.h"
-#include "../bios/screen.h"
+#include "lineavars.h"
 
 #define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER)
 
@@ -32,8 +30,8 @@
  * location of req_col2 is not documented by Atari, but is derived from
  * disassembly of TOS ROMs, and source code for MagiC's VDI.
  */
-extern WORD REQ_COL[16][3];     /* in lineavars.S */
-extern WORD req_col2[240][3];
+extern WORD REQ_COL[16][3];     /* defined in lineavars.S */
+extern WORD req_col2[240][3];   /* defined in lineavars.S */
 
 /* Some color mapping tables */
 WORD MAP_COL[MAXCOLOURS];       /* maps vdi pen -> hardware register */

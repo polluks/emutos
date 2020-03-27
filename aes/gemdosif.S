@@ -1,7 +1,7 @@
 /*
  * gemdosif.S - Assembler part of the GEMDOS interface
  *
- * Copyright 2002-2017, The EmuTOS development team
+ * Copyright 2002-2019, The EmuTOS development team
  *           1999, Caldera Thin Clients, Inc.
  *           1987, Digital Research Inc.
  *
@@ -12,23 +12,31 @@
 #include "asmdefs.h"
 #include "asmstruct.h"
 
+/*
+ * sizes (in words) of the stacks used by:
+ *  (1) the far_bcha/far_mcha/aes_wheel functions
+ *  (2) the tikcod function
+ *
+ * as of july/2019, the observed stack usage is about 24 words for
+ * the mouse stack and 12 words for the tick stack
+ */
+#define MOUSE_STACK_SIZE    48
+#define TICK_STACK_SIZE     36
+
         .globl  _disable_interrupts
         .globl  _enable_interrupts
         .globl  _giveerr
         .globl  _takeerr
         .globl  _retake
-        .globl  _justretf
         .globl  _unset_aestrap
         .globl  _set_aestrap
-        .globl  _aestrap_intercepted
         .globl  _far_mcha
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
         .globl  _aes_wheel
 #endif
         .globl  _far_bcha
         .globl  _drawrat
 
-        .globl  _tikaddr
         .globl  _tiksav
         .globl  _CMP_TICK
         .globl  _NUM_TICK
@@ -42,10 +50,11 @@
         .extern _b_click
         .extern _mchange
         .extern _forkq
+#if CONF_WITH_EXTENDED_MOUSE
         .extern _wheel_change
+#endif
         .extern _tchange
         .extern _b_delay
-        .extern _os_beg
         .extern __etext
 
 /* disable interrupts */
@@ -74,7 +83,6 @@ _enable_interrupts:
         move    savesr,sr
 #endif
         rts
-
 
 /*
  * DOS error trapping code: restores aestrap & critical error vector
@@ -210,25 +218,14 @@ no_retry:
 #endif
         rts
 
-
-
-
 // **** Trap entry: ****
 _aestrap:
-        tst.w   d0
-        jeq     _back
         cmpi.w  #0xC8,d0
         jeq     trapaes
         cmpi.w  #0xC9,d0
         jeq     trapaes
         move.l  savetrap2,-(sp)
         rts
-
-_back:
-        clr.w   -(sp)
-        move.w  #0x4C,-(sp)             // Pterm
-        trap    #1
-
 
 trapaes:
 #if CONF_DEBUG_AES_STACK
@@ -290,8 +287,6 @@ supret:                                 // return from gementry
 #endif
         rte
 
-
-
 _unset_aestrap:
 #ifdef __mcoldfire__
         lea     0x88,a0
@@ -310,24 +305,6 @@ _set_aestrap:
         move.l  #_aestrap,0x88
 #endif
         rts
-
-/*
- * determine if trap #2 has been intercepted by someone else (e.g. NVDI)
- *
- * return 1 if intercepted, else 0
- */
-_aestrap_intercepted:
-        moveq   #1,d0           // assume it's intercepted
-        movea.l 0x88,a0
-        cmpa.l  _os_beg,a0
-        jcs     done
-        cmpa.l  #__etext,a0
-        jcc     done
-        moveq   #0,d0
-done:
-        rts
-
-
 
 _far_bcha:
         move.l  sp,gstksave
@@ -374,7 +351,7 @@ _far_mcha:
         movea.l gstksave,sp
         rts
 
-#if CONF_WITH_VDI_EXTENSIONS
+#if CONF_WITH_EXTENDED_MOUSE
 /* AES mouse wheel handler called by the VDI */
 _aes_wheel:
         move.l  sp,gstksave
@@ -399,8 +376,7 @@ _aes_wheel:
 #endif
         movea.l gstksave,sp
         rts
-#endif
-
+#endif /* CONF_WITH_EXTENDED_MOUSE */
 
 /*
 ;
@@ -412,11 +388,6 @@ _drawrat:
         move.w  6(sp),d1
         move.l  _drwaddr,-(sp)
         rts                     // Jump to vector stored in _drwaddr
-
-
-_justretf:
-        rts
-
 
 _tikcod:
         move.l  sp,tstksave
@@ -438,8 +409,6 @@ L2234:
         movea.l tstksave,sp
         move.l  _tiksav,-(sp)
         rts                     // Jump to vector stored in _tiksav
-
-
 
 SECTION_RODATA
 
@@ -474,8 +443,6 @@ savetrap2:
 _drwaddr:
         .ds.l    1
 
-_tikaddr:
-        .ds.l    1
 gstksave:
         .ds.l    1
 
@@ -510,9 +477,10 @@ criterr_stack:
 /*
  * miscellaneous stacks
  */
-        .ds.b    0x80
+
+        .ds.w    MOUSE_STACK_SIZE
 gstack:                         // gsx stack for mouse
 
-        .ds.b    0x80
+        .ds.b    TICK_STACK_SIZE
 tstack:                         // tick stack
         .ds.l    1

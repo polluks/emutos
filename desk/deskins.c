@@ -8,7 +8,7 @@
  *          . install application
  *          . remove desktop icons
  *
- *      Copyright 2002-2018 The EmuTOS development team
+ *      Copyright 2002-2019 The EmuTOS development team
  *
  *      This software is licenced under the GNU Public License.
  *      Please see LICENSE.TXT for further information.
@@ -23,14 +23,10 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include <string.h>
-
-#include "portab.h"
+#include "emutos.h"
+#include "string.h"
 #include "obdefs.h"
-#include "gsxdefs.h"
 #include "gemdos.h"
-#include "dos.h"
 #include "optimize.h"
 
 #include "deskbind.h"
@@ -38,7 +34,6 @@
 #include "deskapp.h"
 #include "deskfpd.h"
 #include "deskwin.h"
-#include "gembind.h"
 #include "aesbind.h"
 #include "deskinf.h"
 #include "deskfun.h"
@@ -49,13 +44,25 @@
 #include "intmath.h"
 #include "deskins.h"
 #include "desksupp.h"
-#include "kprint.h"
 
 
 /*
  * used by insert_icon()
  */
 static ICONBLK ib;
+
+
+#ifdef ENABLE_KDEBUG
+static void anode_dump(char *msg)
+{
+    ANODE *pa;
+
+    kprintf("%s:\n",msg);
+    for (pa = G.g_ahead; pa; pa = pa->a_next)
+        kprintf("  flags=0x%04x,type=%d,aicon=%d,dicon=%d,appl=%s,data=%s\n",
+                pa->a_flags,pa->a_type,pa->a_aicon,pa->a_dicon,pa->a_pappl,pa->a_pdata);
+}
+#endif
 
 
 /*
@@ -205,8 +212,8 @@ static WORD install_drive(WORD drive)
     pa->a_letter = 'A' + drive;
     pa->a_type = AT_ISDISK;
     pa->a_obid = 0;     /* fixed up when deskmain() calls app_blddesk() */
-    sprintf(G.g_1text,"%s %c",ini_str(STDISK),pa->a_letter);
-    scan_str(G.g_1text, &pa->a_pappl);  /* set up disk name */
+    sprintf(G.g_work,"%s %c",desktop_str_addr(STDISK),pa->a_letter);
+    scan_str(G.g_work, &pa->a_pappl);   /* set up disk name */
     pa->a_pdata = "";                   /* point to empty string */
     pa->a_aicon = (drive > 1) ? IG_HARD : IG_FLOPPY;
     pa->a_dicon = NIL;
@@ -313,22 +320,6 @@ static void clear_all_autorun(void)
 
 
 /*
- * return pointer to start of last segment of path
- * (assumed to be the filename)
- */
-char *filename_start(char *path)
-{
-    char *start = path;
-
-    while (*path)
-        if (*path++ == '\\')
-            start = path;
-
-    return start;
-}
-
-
-/*
  * convert ascii to WORD
  *
  * stops at nul byte or first non-decimal character
@@ -373,7 +364,7 @@ static WORD get_funkey(OBJECT *tree,ANODE *pa,BOOL installed)
     /*
      * this is a new ANODE, or the key has changed: validate it
      */
-    if ((funkey < 1) || (funkey > 20))
+    if ((funkey < FIRST_FUNKEY) || (funkey > LAST_FUNKEY))
     {
         fun_alert(1,STINVKEY);          /* invalid function key */
         return -1;
@@ -431,7 +422,7 @@ WORD ins_app(WORD curr)
      *
      * if not, we handle first-time installation later below.
      */
-    if (G.g_cwin == 0)  /* we're on the desktop, so this is a shortcut icon */
+    if (G.g_cwin == DESKWH) /* we're on the desktop, so this is a shortcut icon */
     {
         ANODE *temppa;
 
@@ -490,14 +481,13 @@ WORD ins_app(WORD curr)
     /*
      * deselect all objects
      */
-    tree = G.a_trees[ADINSAPP];
+    tree = desk_rs_trees[ADINSAPP];
     deselect_all(tree);
 
     /*
      * fill in dialog
      */
-    fmt_str(pfname, name);
-    inf_sset(tree, APNAME, name);
+    set_tedinfo_name(tree, APNAME, pfname);
     inf_sset(tree, APARGS, installed ? pa->a_pargs : "");
     inf_sset(tree, APDOCTYP, installed ? pa->a_pdata+2 : "");
     if (pa->a_funkey)
@@ -656,11 +646,13 @@ static WORD install_desktop_icon(ANODE *pa)
     icon_exists = pa ? TRUE : FALSE;
 
     /*
-     * deselect all objects & hide printer button
+     * deselect all objects & hide printer button if not supported
      */
-    tree = G.a_trees[ADINSDSK];
+    tree = desk_rs_trees[ADINSDSK];
     deselect_all(tree);
+#if !CONF_WITH_PRINTER_ICON
     tree[ID_PRINT].ob_flags |= HIDETREE;
+#endif
 
     /*
      * fill in dialog
@@ -696,25 +688,34 @@ static WORD install_desktop_icon(ANODE *pa)
         tree[ID_ID].ob_state |= DISABLED;
         tree[ID_DRIVE].ob_state |= DISABLED;
         tree[ID_TRASH].ob_state |= DISABLED;
+        tree[ID_PRINT].ob_state |= DISABLED;
         start_fld = ID_LABEL;
 #endif
         break;
     case AT_ISDISK:
         id[0] = pa->a_letter;
-        /* drop thru */
+        FALLTHROUGH;
+#if CONF_WITH_PRINTER_ICON
+    case AT_ISPRNT:
+#endif
     case AT_ISTRSH:
         inf_sset(tree, ID_ID, id);
         if (pa->a_type == AT_ISDISK)
             tree[ID_DRIVE].ob_state |= SELECTED;
+#if CONF_WITH_PRINTER_ICON
+        else if (pa->a_type == AT_ISPRNT)
+            tree[ID_PRINT].ob_state |= SELECTED;
+#endif
         else
             tree[ID_TRASH].ob_state |= SELECTED;
 #if CONF_WITH_DESKTOP_SHORTCUTS
         /*
-         * for desktop disk/trash icons, anything can be changed
+         * for desktop disk/trash/printer icons, anything can be changed
          */
         tree[ID_ID].ob_state &= ~DISABLED;
         tree[ID_DRIVE].ob_state &= ~DISABLED;
         tree[ID_TRASH].ob_state &= ~DISABLED;
+        tree[ID_PRINT].ob_state &= ~DISABLED;
 #endif
     }
     strcpy(curr_label, pa->a_pappl);
@@ -758,6 +759,11 @@ static WORD install_desktop_icon(ANODE *pa)
             case 1:
                 pa->a_type = AT_ISTRSH;
                 break;
+#if CONF_WITH_PRINTER_ICON
+            case 2:
+                pa->a_type = AT_ISPRNT;
+                break;
+#endif
             }
             inf_sget(tree, ID_LABEL, new_label);
             if (strcmp(curr_label, new_label))      /* if label changed, */
@@ -770,7 +776,7 @@ static WORD install_desktop_icon(ANODE *pa)
             break;
         case ID_CNCL:           /* cancel further installs */
             change = -1;
-            /* drop thru */
+            FALLTHROUGH;
         case ID_SKIP:           /* skip this application */
             if (!icon_exists)       /* we allocated one */
                 app_free(pa);       /* so we need to free it */
@@ -801,7 +807,7 @@ static WORD install_desktop_icon(ANODE *pa)
 }
 
 
-#if CONF_WITH_WINDOW_ICONS
+#if CONF_WITH_DESKTOP_SHORTCUTS || CONF_WITH_WINDOW_ICONS
 
 #define EXT_LENGTH 3
 static const char exec_ext[][EXT_LENGTH+1] = { "TOS", "TTP", "PRG", "APP", "GTP" };
@@ -825,8 +831,10 @@ static BOOL is_executable(const char *filename)
 
     return FALSE;
 }
+#endif
 
 
+#if CONF_WITH_WINDOW_ICONS
 /*
  * set icon numbers into ANODE
  */
@@ -892,7 +900,7 @@ static WORD install_window_icon(FNODE *pf)
     /*
      * deselect all objects
      */
-    tree = G.a_trees[ADINSWIN];
+    tree = desk_rs_trees[ADINSWIN];
     deselect_all(tree);
 
     /*
@@ -929,8 +937,7 @@ static WORD install_window_icon(FNODE *pf)
         tree[IW_FILE].ob_state &= ~DISABLED;
         tree[IW_FOLD].ob_state &= ~DISABLED;
     }
-    fmt_str(curr_name, temp);
-    inf_sset(tree, IW_NAME, temp);
+    set_tedinfo_name(tree, IW_NAME, curr_name);
 
     curr_icon = pa ? pa->a_dicon : 0;
     if (curr_icon < 0)
@@ -1004,7 +1011,7 @@ static WORD install_window_icon(FNODE *pf)
             break;
         case IW_CNCL:           /* cancel further installs */
             change = -1;
-            /* drop thru */
+            FALLTHROUGH;
         case IW_SKIP:           /* skip this application */
             break;
         }
@@ -1073,11 +1080,11 @@ WORD ins_icon(WORD sobj)
     /*
      * handle one or more desktop icons
      */
-    if ( (i_find(DESKWH, sobj, NULL, NULL)) )
+    if ( (app_afind_by_id(sobj)) )
     {
         for ( ; sobj; sobj = win_isel(G.g_screen, DROOT, sobj))
         {
-            pa = i_find(DESKWH, sobj, NULL, NULL);
+            pa = app_afind_by_id(sobj);
             if (pa)
             {
                 rc = install_desktop_icon(pa);
@@ -1124,7 +1131,7 @@ WORD rmv_icon(WORD sobj)
 
     for ( ; sobj; sobj = win_isel(G.g_screen, DROOT, sobj))
     {
-        pa = i_find(DESKWH,sobj,NULL,NULL);
+        pa = app_afind_by_id(sobj);
         if (!pa)
             continue;
         if (pa->a_flags & AF_ISDESK)
@@ -1182,6 +1189,8 @@ void ins_shortcut(WORD wh, WORD mx, WORD my)
          * set up the new ANODE
          */
         newpa->a_flags = (pa->a_flags & ~AF_WINDOW) | AF_ISDESK;
+        if ((pa->a_type == AT_ISFILE) && is_executable(pf->f_name))
+            newpa->a_flags |= AF_ISEXEC;
         newpa->a_funkey = 0;
         newpa->a_letter = '\0';
         newpa->a_type = pa->a_type;
@@ -1197,7 +1206,7 @@ void ins_shortcut(WORD wh, WORD mx, WORD my)
         /*
          * override the default icon with an installed icon (if it exists)
          */
-        pa = app_afind_by_name((pf->f_attr&F_SUBDIR)?AT_ISFOLD:AT_ISFILE,
+        pa = app_afind_by_name((pf->f_attr&FA_SUBDIR)?AT_ISFOLD:AT_ISFILE,
                         AF_ISDESK, pw->w_pnode.p_spec, pf->f_name, &dummy);
         if (pa)                     /* paranoia */
         {

@@ -1,7 +1,7 @@
 /*
  * setjmp.h - EmuTOS own copy of an ANSI standard header
  *
- * Copyright (C) 2002 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -12,8 +12,6 @@
 
 #ifndef SETJMP_H
 #define SETJMP_H
-
-#include "portab.h"
 
 typedef long jmp_buf[13];
 

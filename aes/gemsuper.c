@@ -1,6 +1,6 @@
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2018 The EmuTOS development team
+*                 2002-2019 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -15,15 +15,14 @@
 
 /* #define ENABLE_KDEBUG */
 
-#include "config.h"
-#include "portab.h"
-#include "kprint.h"
+#include "emutos.h"
 #include "struct.h"
-#include "basepage.h"
+#include "aesdefs.h"
+#include "aesext.h"
+#include "aesvars.h"
 #include "obdefs.h"
 #include "intmath.h"
 #include "gemlib.h"
-#include "crysbind.h"
 #include "gem_rsc.h"
 
 #include "gemsuper.h"
@@ -47,11 +46,12 @@
 
 #include "string.h"
 
+
 #if CONF_SERIAL_CONSOLE
 #define ENABLE_KDEBUG
 #endif
 
-extern LONG super(WORD cx, AESPB *pcrys_blk);   /* called only from gemdosif.S */
+LONG super(WORD cx, AESPB *pcrys_blk);  /* called only from gemdosif.S */
 
 GLOBAL WORD     gl_mnclick;
 
@@ -334,7 +334,7 @@ static UWORD crysbind(WORD opcode, AESGLOBAL *pglobal, WORD control[], WORD int_
         ret = fs_input((char *)FS_IPATH, (char *)FS_ISEL, &FS_BUTTON, NULL);
         break;
     case FSEL_EXINPUT:
-        ret = fs_input((char *)FS_IPATH, (char *)FS_ISEL, &FS_BUTTON, (char *)FS_ILABEL);
+        ret = fs_input((char *)FS_IPATH, (char *)FS_ISEL, &FS_BUTTON, (char *)FS_TITLE);
         break;
 
     /* Window Manager */
@@ -449,7 +449,7 @@ static void xif(AESPB *pcrys_blk)
     if (AIN_LEN)
         memcpy(addr_in, pcrys_blk->addrin, min(AIN_LEN,AI_SIZE)*sizeof(LONG));
 
-    int_out[0] = crysbind(OP_CODE, (AESGLOBAL *)pcrys_blk->global, control, int_in, int_out,
+    RET_CODE = crysbind(OP_CODE, (AESGLOBAL *)pcrys_blk->global, control, int_in, int_out,
                                 addr_in);
 
     if (OUT_LEN)
@@ -469,7 +469,7 @@ LONG super(WORD cx, AESPB *pcrys_blk)
     {
     case 200:
         xif(pcrys_blk);
-        /* drop thru */
+        FALLTHROUGH;
     case 201:           /* undocumented TOS feature */
         dsptch();
     }
@@ -479,6 +479,9 @@ LONG super(WORD cx, AESPB *pcrys_blk)
 
 
 #if CONF_DEBUG_AES_STACK
+
+void trapaes_debug_enter(void); /* called from gemdosif.S */
+void trapaes_debug_exit(void);
 
 #define MARKER_BYTE 0xaa
 

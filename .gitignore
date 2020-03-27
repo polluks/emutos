@@ -1,7 +1,6 @@
 /obj/
 *.tr.c
 *_preprocessed.*
-/*.dsm
 /*.prg
 /*.st
 /*.exe
@@ -27,4 +26,4 @@
 /temp.def
 /local.mk
 /dsm.txt
-/fal_dsm.txt
+/tests/*/*.tos

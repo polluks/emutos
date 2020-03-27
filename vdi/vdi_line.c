@@ -3,31 +3,24 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright (C) 2002-2018 The EmuTOS development team
+ * Copyright (C) 2002-2019 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
  */
 
-#include "config.h"
-#include "portab.h"
+#include "emutos.h"
 #include "intmath.h"
 #include "asm.h"
+#include "aesext.h"
 #include "vdi_defs.h"
+#include "vdistub.h"
 #include "blitter.h"
-#include "../bios/lineavars.h"
-#include "../bios/machine.h"    /* for blitter-related items */
-#include "../bios/processor.h"  /* for cache control routines */
+#include "biosext.h"    /* for cache control routines */
+#include "lineavars.h"
+#include "has.h"        /* for blitter-related items */
 
 
-extern void linea_rect(void);     /* called only from linea.S */
-extern void linea_hline(void);    /* called only from linea.S */
-extern void linea_polygon(void);  /* called only from linea.S */
-extern void linea_line(void);     /* called only from linea.S */
-extern void linea_fill(void);     /* called only from linea.S */
-
-
-#if CONF_WITH_BLITTER
 /*
  * private structure for parameter passing
  */
@@ -44,6 +37,7 @@ typedef struct
  */
 #define STD_PATMSKS ((1u<<15) | (1u<<7) | (1u<<3) | (1u<<1) | (1u<<0))
 
+#if CONF_WITH_BLITTER
 /*
  * blitter ops for draw/nodraw cases for wrt_mode 0-3
  */
@@ -176,12 +170,34 @@ void vdi_vql_attributes(Vwk * vwk)
 }
 
 
+/*
+ * set up values required by the horizontal line drawing functions
+ *
+ * This figures out the sizes of the left, centre, and right sections.
+ * If the line lies entirely within a WORD, then the centre and right
+ * section sizes will be zero; if the line spans two WORDs, then the
+ * centre size will be zero.
+ * It also initialises the screen pointer.
+ */
+static __inline__ void draw_rect_setup(BLITPARM *b, const VwkAttrib *attr, const Rect *rect)
+{
+    b->leftmask = 0xffff >> (rect->x1 & 0x0f);
+    b->rightmask = 0xffff << (15 - (rect->x2 & 0x0f));
+    b->width = (rect->x2 >> 4) - (rect->x1 >> 4) + 1;
+    if (b->width == 1) {                /* i.e. all bits within 1 WORD */
+        b->leftmask &= b->rightmask;    /* so combine masks */
+        b->rightmask = 0;
+    }
+    b->addr = get_start_addr(rect->x1, rect->y1);   /* init address ptr */
+}
+
+
 #if CONF_WITH_BLITTER
 #if CONF_WITH_VDI_VERTLINE
 /*
  * draw a single vertical line using the blitter
  */
-static BOOL blit_vline(const Line *line, WORD wrt_mode, UWORD color)
+static void hwblit_vertical_line(const Line *line, WORD wrt_mode, UWORD color)
 {
     WORD i, plane, dy, yinc, height, start_line;
     UWORD mask;
@@ -260,115 +276,127 @@ static BOOL blit_vline(const Line *line, WORD wrt_mode, UWORD color)
     for (i = height & 0x000f; i; i--)
         rolw1(mask);
     LN_MASK = mask;
-
-    return TRUE;
 }
 #endif
 
 
 /*
- * draw a single horizontal line using the blitter
+ * hwblit_rect_nonstd: handle non-standard values of patmsk for hwblit_rect_common()
+ *
+ * we do a line-at-a-time within the normal plane-at-a-time loop
+ *
+ * NOTE: we rely on hwblit_rect_common() for the initial setup
  */
-static BOOL blit_hline(const VwkAttrib *attr, const Rect *rect, BLITPARM *b)
+static void hwblit_rect_nonstd(const VwkAttrib *attr, const Rect *rect, UWORD *addr)
 {
+    const UWORD patmsk = attr->patmsk;
     const UWORD *patptr = attr->patptr;
     UWORD color = attr->color;
-    UWORD *screen_addr = b->addr;
-    int patindex, plane;
+    UWORD patindex = rect->y1 & patmsk;
+    const WORD ycount = rect->y2 - rect->y1 + 1;
+    UWORD *screen_addr = addr;
+    int line, plane;
 
-    /*
-     * since the blitter doesn't see the data cache, and we may be in
-     * copyback mode (e.g. the FireBee), we must flush the data cache
-     * first to ensure that the screen memory is current.  the following
-     * is overkill, but note that the current cache control routines
-     * ignore the length specification & act on the whole cache anyway.
-     */
-    flush_data_cache(b->addr, v_lin_wr);
-
-    BLITTER->src_x_incr = 0;
-    BLITTER->endmask_1 = b->leftmask;
-    BLITTER->endmask_2 = 0xffff;
-    BLITTER->endmask_3 = b->rightmask;
-    BLITTER->dst_x_incr = v_planes * sizeof(WORD);
-    BLITTER->x_count = b->width;
-    BLITTER->hop = HOP_HALFTONE_ONLY;
-    BLITTER->status = 0;            /* LINENO = 0 */
-    BLITTER->skew = 0;
-
-    patindex = rect->y1 & attr->patmsk;
-
-    for (plane = 0; plane < v_planes; plane++, color >>= 1)
+    for (plane = 0; plane < v_planes; plane++, color>>= 1)
     {
-        BLITTER->halftone[0] = patptr[patindex];
-        if (attr->multifill)
-            patindex += 16;
         BLITTER->dst_addr = screen_addr++;
-        BLITTER->y_count = 1;
+        BLITTER->hop = HOP_HALFTONE_ONLY;
         BLITTER->op = (color & 1) ? op_draw[attr->wrt_mode]: op_nodraw[attr->wrt_mode];
 
-        /*
-         * we run the blitter in the Atari-recommended way: use no-HOG mode,
-         * and manually restart the blitter until it's done.
-         */
-        BLITTER->status = BUSY;     /* no-HOG mode */
-        __asm__ __volatile__(
-        "lea    0xFFFF8A3C,a0\n\t"
-        "0:\n\t"
-        "tas    (a0)\n\t"
-        "nop\n\t"
-        "jbmi   0b\n\t"
-        :
-        :
-        : "a0", "memory", "cc"
-        );
-    }
-    /*
-     * we've modified a screen line behind the cpu's back, so we must
-     * invalidate any cached screen data.
-     */
-    invalidate_data_cache(b->addr,v_lin_wr);
+        for (line = 0; line < ycount; line++)
+        {
+            BLITTER->halftone[0] = patptr[patindex++];
+            if (patindex > patmsk)
+                patindex = 0;
+            BLITTER->y_count = 1;
 
-    return TRUE;
+            /*
+             * we run the blitter in the Atari-recommended way: use no-HOG mode,
+             * and manually restart the blitter until it's done.
+             */
+            BLITTER->status = BUSY;
+            __asm__ __volatile__(
+            "lea    0xFFFF8A3C,a0\n\t"
+            "0:\n\t"
+            "tas    (a0)\n\t"
+            "nop\n\t"
+            "jbmi   0b\n\t"
+            :
+            :
+            : "a0", "memory", "cc"
+            );
+        }
+
+        if (attr->multifill)
+            patptr += 16;
+    }
+
+    /*
+     * invalidate any cached screen data
+     */
+    invalidate_data_cache(addr, v_lin_wr*ycount);
 }
 
 
 /*
- * blit_rect_common: blitter version of draw_rect_common
+ * hwblit_rect_common: blitter version of draw_rect_common
  *
  * Please refer to draw_rect_common for further information
  */
-static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *b)
+static void hwblit_rect_common(const VwkAttrib *attr, const Rect *rect)
 {
     const UWORD patmsk = attr->patmsk;
     const UWORD *patptr = attr->patptr;
     UWORD color = attr->color;
     const WORD ycount = rect->y2 - rect->y1 + 1;
-    UWORD *screen_addr = b->addr;
+    UWORD *screen_addr;
     UBYTE status;
     int i, plane;
+    BLITPARM b;
+    BOOL nonstd;
 
-    /*
-     * the following blitter code works for 'standard' values of patmsk
-     * (i.e. 0, 1, 3, 7, or 15).  if we have a non-standard value, we
-     * handle it via the non-blitter code.
-     */
-    if ((patmsk >= 16) || ((STD_PATMSKS & (1u<<patmsk)) == 0))
-        return FALSE;
+    /* set up masks, width, screen address pointer */
+    draw_rect_setup(&b, attr, rect);
+    screen_addr = b.addr;
 
     /*
      * flush the data cache to ensure that the screen memory is current
      */
-    flush_data_cache(b->addr, v_lin_wr*ycount);
+    flush_data_cache(b.addr, v_lin_wr*ycount);
 
     BLITTER->src_x_incr = 0;
-    BLITTER->endmask_1 = b->leftmask;
+    BLITTER->endmask_1 = b.leftmask;
     BLITTER->endmask_2 = 0xffff;
-    BLITTER->endmask_3 = b->rightmask;
+    BLITTER->endmask_3 = b.rightmask;
     BLITTER->dst_x_incr = v_planes * sizeof(WORD);
-    BLITTER->dst_y_incr = v_lin_wr - (v_planes*sizeof(WORD)*(b->width-1));
-    BLITTER->x_count = b->width;
-    status = BUSY | (rect->y1 & LINENO);    /* NOHOG mode */
+    BLITTER->dst_y_incr = v_lin_wr - (v_planes*sizeof(WORD)*(b.width-1));
+    BLITTER->x_count = b.width;
     BLITTER->skew = 0;
+
+    /*
+     * check for 'non-standard' values of patmsk:
+     *  . if multifill is set, patmsk must be 15
+     *  . if multifill is *not* set, patmsk must be 0, 1, 3, 7, or 15
+     * if we have a non-standard value, we call a separate function
+     */
+    nonstd = FALSE;
+    if (attr->multifill)
+    {
+        if (patmsk != 15)
+            nonstd = TRUE;
+    }
+    else
+    {
+        if ((patmsk >= 16) || ((STD_PATMSKS & (1u<<patmsk)) == 0))
+            nonstd = TRUE;
+    }
+    if (nonstd)
+    {
+        hwblit_rect_nonstd(attr, rect, b.addr);
+        return;
+    }
+
+    status = BUSY | (rect->y1 & LINENO);    /* NOHOG mode */
 
     if (!attr->multifill)       /* only need to init halftone once */
     {
@@ -380,9 +408,10 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
     {
         if (attr->multifill)    /* need to init halftone each time */
         {
+            UWORD *p = BLITTER->halftone;
+            /* more efficient here because patmsk must be 15 */
             for (i = 0; i < 16; i++)
-                BLITTER->halftone[i] = patptr[i & patmsk];
-            patptr += 16;
+                *p++ = *patptr++;
         }
         BLITTER->dst_addr = screen_addr++;
         BLITTER->y_count = ycount;
@@ -409,27 +438,21 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
     /*
      * invalidate any cached screen data
      */
-    invalidate_data_cache(b->addr, v_lin_wr*ycount);
-
-    return TRUE;
+    invalidate_data_cache(b.addr, v_lin_wr*ycount);
 }
 #endif
 
 
 /*
- * draw_rect_common - draw one or more horizontal lines
+ * swblit_rect_common - draw one or more horizontal lines via software
  *
  * This code does the following:
- *  1. Figures out the sizes of the left, centre, and right sections.  If
- *     the line lies entirely within a WORD, then the centre and right
- *     section sizes will be zero; if the line spans two WORDs, then the
- *     centre size will be zero.
- *  2. The outermost control is via a switch() statement depending on
+ *  1. The outermost control is via a switch() statement depending on
  *     the current drawing mode.
- *  3. Within each case, the outermost loop processes one scan line per
+ *  2. Within each case, the outermost loop processes one scan line per
  *     iteration.
- *  4. Within this loop, the video planes are processed in sequence.
- *  5. Within this, the left section is processed, then the centre and/or
+ *  3. Within this loop, the video planes are processed in sequence.
+ *  4. Within this, the left section is processed, then the centre and/or
  *     right sections (if they exist).
  *
  * NOTE: this code seems rather longwinded and repetitive.  In fact it
@@ -440,83 +463,72 @@ static BOOL blit_rect_common(const VwkAttrib *attr, const Rect *rect, BLITPARM *
  * 8MHz ST or 16MHz Falcon.  You are strongly advised not to change this
  * without a lot of careful thought & performance testing!
  */
-void OPTIMIZE_SMALL draw_rect_common(const VwkAttrib *attr, const Rect *rect)
+static void OPTIMIZE_SMALL swblit_rect_common(const VwkAttrib *attr, const Rect *rect)
 {
-    UWORD leftmask, rightmask, *addr;
     const UWORD patmsk = attr->patmsk;
     const int vplanes = v_planes;
     const int yinc = (v_lin_wr>>1) - vplanes;
-    int width, centre, y;
-#if CONF_WITH_BLITTER
+    int centre, y;
     BLITPARM b;
-#endif
 
-    leftmask = 0xffff >> (rect->x1 & 0x0f);
-    rightmask = 0xffff << (15 - (rect->x2 & 0x0f));
-    width = (rect->x2 >> 4) - (rect->x1 >> 4) + 1;
-    if (width == 1) {           /* i.e. all bits within 1 WORD */
-        leftmask &= rightmask;  /* so combine masks */
-        rightmask = 0;
-    }
-    addr = get_start_addr(rect->x1,rect->y1);   /* init address ptr */
+    /* set up masks, width, screen address pointer */
+    draw_rect_setup(&b, attr, rect);
 
-#if CONF_WITH_BLITTER
-    if (blitter_is_enabled)
-    {
-        b.leftmask = leftmask;
-        b.rightmask = rightmask;
-        b.width = width;
-        b.addr = addr;
-
-        /*
-         * special handling for common horizontal line case
-         */
-        if (rect->y1 == rect->y2)
-        {
-            if (blit_hline(attr, rect, &b))         /* if it ran ok, */
-                return;                             /* we're done    */
-        }
-        else
-        {
-            if (blit_rect_common(attr, rect, &b))   /* if it ran ok, */
-                return;                             /* we're done    */
-        }
-    }
-#endif
-
-    centre = width - 2;
+    centre = b.width - 2 - 1;   /* -1 because of the way we construct the innermost loops */
 
     switch(attr->wrt_mode) {
-    case 3:                 /* erase (reverse transparent) mode */
-        for (y = rect->y1; y <= rect->y2; y++, addr += yinc) {
+    case WM_ERASE:          /* erase (reverse transparent) mode */
+        for (y = rect->y1; y <= rect->y2; y++, b.addr += yinc) {
             int patind = patmsk & y;   /* starting pattern */
             int plane;
             UWORD color;
 
-            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, addr++) {
-                UWORD *work = addr;
+            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, b.addr++) {
+                UWORD *work = b.addr;
                 UWORD pattern = ~attr->patptr[patind];
                 int n;
 
                 if (color & 0x0001) {
-                    *work |= pattern & leftmask;    /* left section */
+                    *work |= pattern & b.leftmask;  /* left section */
                     work += vplanes;
-                    for (n = 0; n < centre; n++) {  /* centre section */
+#ifdef __mcoldfire__
+                    for (n = centre; n >= 0; n--) { /* centre section */
                         *work |= pattern;
                         work += vplanes;
                     }
-                    if (rightmask) {                /* right section */
-                        *work |= pattern & rightmask;
+#else
+                    if (centre >= 0) {              /* centre section */
+                        n = centre;
+                        __asm ("1:\n\t"
+                               "or.w %2,(%1)\n\t"
+                               "adda.w %3,%1\n\t"
+                               "dbra %0,1b" : "+d"(n), "+a"(work) : "d"(pattern),
+                                              "r"(2*vplanes) : "memory", "cc");
+                    }
+#endif
+                    if (b.rightmask) {              /* right section */
+                        *work |= pattern & b.rightmask;
                     }
                 } else {
-                    *work &= ~(pattern & leftmask); /* left section */
+                    *work &= ~(pattern & b.leftmask);   /* left section */
                     work += vplanes;
-                    for (n = 0; n < centre; n++) {  /* centre section */
+#ifdef __mcoldfire__
+                    for (n = centre; n >= 0; n--) { /* centre section */
                         *work &= ~pattern;
                         work += vplanes;
                     }
-                    if (rightmask) {                /* right section */
-                        *work &= ~(pattern & rightmask);
+#else
+                    if (centre >= 0) {              /* centre section */
+                        n = centre;
+                        __asm ("1:\n\t"
+                               "and.w %2,(%1)\n\t"
+                               "adda.w %3,%1\n\t"
+                               "dbra %0,1b" : "+d"(n), "+a"(work) : "d"(~pattern),
+                                              "r"(2*vplanes) : "memory", "cc");
+                    }
+#endif
+                    if (b.rightmask) {              /* right section */
+                        *work &= ~(pattern & b.rightmask);
                     }
                 }
                 if (attr->multifill)
@@ -524,61 +536,94 @@ void OPTIMIZE_SMALL draw_rect_common(const VwkAttrib *attr, const Rect *rect)
             }
         }
         break;
-    case 2:                 /* xor mode */
-        for (y = rect->y1; y <= rect->y2; y++, addr += yinc) {
+    case WM_XOR:            /* xor mode */
+        for (y = rect->y1; y <= rect->y2; y++, b.addr += yinc) {
             int patind = patmsk & y;   /* starting pattern */
             int plane;
             UWORD color;
 
-            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, addr++) {
-                UWORD *work = addr;
+            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, b.addr++) {
+                UWORD *work = b.addr;
                 UWORD pattern = attr->patptr[patind];
                 int n;
 
-                *work ^= pattern & leftmask;        /* left section */
+                *work ^= pattern & b.leftmask;      /* left section */
                 work += vplanes;
-                for (n = 0; n < centre; n++) {      /* centre section */
+#ifdef __mcoldfire__
+                for (n = centre; n >= 0; n--) {    /* centre section */
                     *work ^= pattern;
                     work += vplanes;
                 }
-                if (rightmask) {                    /* right section */
-                    *work ^= pattern & rightmask;
+#else
+                if (centre >= 0) {                  /* centre section */
+                    n = centre;
+                    __asm ("1:\n\t"
+                           "eor.w %2,(%1)\n\t"
+                           "adda.w %3,%1\n\t"
+                           "dbra %0,1b" : "+d"(n), "+a"(work) : "d"(pattern),
+                                          "r"(2*vplanes) : "memory", "cc");
+                }
+#endif
+                if (b.rightmask) {                  /* right section */
+                    *work ^= pattern & b.rightmask;
                 }
                 if (attr->multifill)
                     patind += 16;                   /* advance pattern data */
             }
         }
         break;
-    case 1:                 /* transparent mode */
-        for (y = rect->y1; y <= rect->y2; y++, addr += yinc) {
+    case WM_TRANS:          /* transparent mode */
+        for (y = rect->y1; y <= rect->y2; y++, b.addr += yinc) {
             int patind = patmsk & y;   /* starting pattern */
             int plane;
             UWORD color;
 
-            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, addr++) {
-                UWORD *work = addr;
+            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, b.addr++) {
+                UWORD *work = b.addr;
                 UWORD pattern = attr->patptr[patind];
                 int n;
 
                 if (color & 0x0001) {
-                    *work |= pattern & leftmask;    /* left section */
+                    *work |= pattern & b.leftmask;  /* left section */
                     work += vplanes;
-                    for (n = 0; n < centre; n++) {  /* centre section */
+#ifdef __mcoldfire__
+                    for (n = centre; n >= 0; n--) { /* centre section */
                         *work |= pattern;
                         work += vplanes;
                     }
-                    if (rightmask) {                /* right section */
-                        *work |= pattern & rightmask;
+#else
+                    if (centre >= 0) {              /* centre section */
+                        n = centre;
+                        __asm ("1:\n\t"
+                               "or.w %2,(%1)\n\t"
+                               "adda.w %3,%1\n\t"
+                               "dbra %0,1b" : "+d"(n), "+a"(work) : "d"(pattern),
+                                              "r"(2*vplanes) : "memory", "cc");
+                    }
+#endif
+                    if (b.rightmask) {              /* right section */
+                        *work |= pattern & b.rightmask;
                     }
                 } else {
-                    *work &= ~(pattern & leftmask); /* left section */
+                    *work &= ~(pattern & b.leftmask);   /* left section */
                     work += vplanes;
-                    for (n = 0; n < centre; n++) {  /* centre section */
+#ifdef __mcoldfire__
+                    for (n = centre; n >= 0; n--) { /* centre section */
                         *work &= ~pattern;
                         work += vplanes;
                     }
-                    if (rightmask) {                /* right section */
-                        *work &= ~(pattern & rightmask);
+#else
+                    if (centre >= 0) {              /* centre section */
+                        n = centre;
+                        __asm ("1:\n\t"
+                               "and.w %2,(%1)\n\t"
+                               "adda.w %3,%1\n\t"
+                               "dbra %0,1b" : "+d"(n), "+a"(work) : "d"(~pattern),
+                                              "r"(2*vplanes) : "memory", "cc");
+                    }
+#endif
+                    if (b.rightmask) {              /* right section */
+                        *work &= ~(pattern & b.rightmask);
                     }
                 }
                 if (attr->multifill)
@@ -587,27 +632,38 @@ void OPTIMIZE_SMALL draw_rect_common(const VwkAttrib *attr, const Rect *rect)
         }
         break;
     default:                /* replace mode */
-        for (y = rect->y1; y <= rect->y2; y++, addr += yinc) {
+        for (y = rect->y1; y <= rect->y2; y++, b.addr += yinc) {
             int patind = patmsk & y;   /* starting pattern */
             int plane;
             UWORD color;
 
-            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, addr++) {
-                UWORD data, *work = addr;
+            for (plane = 0, color = attr->color; plane < vplanes; plane++, color>>=1, b.addr++) {
+                UWORD data, *work = b.addr;
                 UWORD pattern = (color & 0x0001) ? attr->patptr[patind] : 0x0000;
                 int n;
 
-                data = *work & ~leftmask;           /* left section */
-                data |= pattern & leftmask;
+                data = *work & ~b.leftmask;         /* left section */
+                data |= pattern & b.leftmask;
                 *work = data;
                 work += vplanes;
-                for (n = 0; n < centre; n++) {      /* centre section */
+#ifdef __mcoldfire__
+                for (n = centre; n >= 0; n--) {     /* centre section */
                     *work = pattern;
                     work += vplanes;
                 }
-                if (rightmask) {                    /* right section */
-                    data = *work & ~rightmask;
-                    data |= pattern & rightmask;
+#else
+                if (centre >= 0) {                  /* centre section */
+                    n = centre;
+                    __asm ("1:\n\t"
+                           "move.w %2,(%1)\n\t"
+                           "adda.w %3,%1\n\t"
+                           "dbra %0,1b" : "+d"(n), "+a"(work) : "r"(pattern),
+                                          "r"(2*vplanes) : "memory", "cc");
+                }
+#endif
+                if (b.rightmask) {                  /* right section */
+                    data = *work & ~b.rightmask;
+                    data |= pattern & b.rightmask;
                     *work = data;
                 }
                 if (attr->multifill)
@@ -615,6 +671,26 @@ void OPTIMIZE_SMALL draw_rect_common(const VwkAttrib *attr, const Rect *rect)
             }
         }
         break;
+    }
+}
+
+
+/*
+ * draw_rect_common - draw one or more horizontal lines
+ *
+ * calls the hardware or software blitter code to perform the blit
+ */
+void draw_rect_common(const VwkAttrib *attr, const Rect *rect)
+{
+#if CONF_WITH_BLITTER
+    if (blitter_is_enabled)
+    {
+        hwblit_rect_common(attr, rect);
+    }
+    else
+#endif
+    {
+        swblit_rect_common(attr, rect);
     }
 }
 
@@ -716,10 +792,14 @@ void linea_rect(void)
     Rect line;
 
     if (CLIP) {
-        if (X1 < XMINCL) X1 = XMINCL;
-        if (X2 > XMAXCL) X2 = XMAXCL;
-        if (Y1 < YMINCL) Y1 = YMINCL;
-        if (Y2 > YMAXCL) Y2 = YMAXCL;
+        if (X1 < XMINCL)
+            X1 = XMINCL;
+        if (X2 > XMAXCL)
+            X2 = XMAXCL;
+        if (Y1 < YMINCL)
+            Y1 = YMINCL;
+        if (Y2 > YMAXCL)
+            Y2 = YMAXCL;
     }
     line.x1 = X1;
     line.x2 = X2;
@@ -771,7 +851,6 @@ void linea_polygon(void)
         clipper.xmn_clip = 0;
         clipper.xmx_clip = xres;
     }
-    /* compared to real line-A, clc_flit explicitly skips outline */
     clc_flit(&attr, &clipper, points, Y1, count);
 }
 
@@ -882,16 +961,16 @@ BOOL clip_line(Vwk * vwk, Line * line)
         deltax = line->x2 - line->x1;
         deltay = line->y2 - line->y1;
         if (line_clip_flag & 1) {               /* left ? */
-            *y = line->y1 + mul_div(deltay, (vwk->xmn_clip - line->x1), deltax);
+            *y = line->y1 + mul_div_round(deltay, (vwk->xmn_clip-line->x1), deltax);
             *x = vwk->xmn_clip;
         } else if (line_clip_flag & 2) {        /* right ? */
-            *y = line->y1 + mul_div(deltay, (vwk->xmx_clip - line->x1), deltax);
+            *y = line->y1 + mul_div_round(deltay, (vwk->xmx_clip-line->x1), deltax);
             *x = vwk->xmx_clip;
         } else if (line_clip_flag & 4) {        /* top ? */
-            *x = line->x1 + mul_div(deltax, (vwk->ymn_clip - line->y1), deltay);
+            *x = line->x1 + mul_div_round(deltax, (vwk->ymn_clip-line->y1), deltay);
             *y = vwk->ymn_clip;
         } else if (line_clip_flag & 8) {        /* bottom ? */
-            *x = line->x1 + mul_div(deltax, (vwk->ymx_clip - line->y1), deltay);
+            *x = line->x1 + mul_div_round(deltax, (vwk->ymx_clip-line->y1), deltay);
             *y = vwk->ymx_clip;
         }
     }
@@ -910,15 +989,20 @@ void polyline(Vwk * vwk, Point * point, int count, WORD color)
     int i;
     Line line;
 
-    for(i = count - 1; i > 0; i--) {
+    for (i = count-1, LSTLIN = FALSE; i > 0; i--) {
+        if (i == 1)
+            LSTLIN = TRUE;
         line.x1 = point->x;
         line.y1 = point->y;
         point++;                /* advance point by point */
         line.x2 = point->x;
         line.y2 = point->y;
 
-        if (!vwk->clip || clip_line(vwk, &line))
-            abline(&line, vwk->wrt_mode, color);
+        if (vwk->clip)
+            if (!clip_line(vwk, &line))
+                continue;
+
+        abline(&line, vwk->wrt_mode, color);
     }
 }
 
@@ -1069,10 +1153,16 @@ static void cir_dda(WORD line_width)
         x++;
     }
 
-    if (xsize == ysize)     /* square pixels, e.g. ST high, ST low */
+    if (xsize == ysize)     /* square pixels, e.g. ST high */
         return;
 
-    if (xsize < ysize) {    /* tall pixels, e.g. ST medium, Falcon 640x240 */
+    /*
+     * handle tall pixels, e.g. ST medium, Falcon 640x240
+     *
+     * note that this can also include ST Low, which has "slightly tall"
+     * pixels on pre-TOS3 machines
+     */
+    if (xsize < ysize) {
         /* Fake pixel averaging */
         x = 0;
 
@@ -1187,7 +1277,7 @@ void wideline(Vwk * vwk, Point * point, int count)
     WORD i, k;
     WORD wx1, wy1, wx2, wy2, vx, vy;
     BOOL closed = FALSE;
-    Point *ptr, box[5];      /* box too high, to close polygon */
+    Point *ptr, box[5];      /* box must be large enough to close polygon */
 
     /* Don't attempt wide lining on a degenerate polyline */
     if (count < 2)
@@ -1237,25 +1327,22 @@ void wideline(Vwk * vwk, Point * point, int count)
             continue;
 
         /* Calculate offsets to fatten the line. */
-        if (vx == 0) {
-            /* line is horizontal - do it the simple way */
+        if (vx == 0) {      /* line is vertical - do it the simple way */
             vx = q_circle[0];
             vy = 0;
         }
-        else if (vy == 0) {
-            /* line is vertical - do it the simple way */
+        else if (vy == 0) { /* line is horizontal - even simpler */
             vx = 0;
             vy = num_qc_lines - 1;
         }
-        else {
+        else {              /* neither */
             /* Find the offsets in x and y for a point perpendicular */
             /* to the line segment at the appropriate distance. */
             k = mul_div(-vy, ysize, xsize);
             vy = mul_div(vx, xsize, ysize);
             vx = k;
             perp_off(&vx, &vy);
-        }                       /* End else:  neither horizontal nor
-                                   vertical. */
+        }
 
         /* Prepare the control and points parameters for the polygon call. */
         ptr = box;
@@ -1303,17 +1390,16 @@ static void draw_arrow(Vwk * vwk, Point * point, int count, int inc)
 {
     LONG line_len2;
     WORD arrow_len, arrow_wid, line_len;
-    WORD dx, dy;
+    WORD dx, dy, dxfactor, dyfactor;
     WORD base_x, base_y, ht_x, ht_y;
-    WORD temp, i;
-    Point triangle[8];       /* triangle 2 high to close polygon */
+    WORD i;
+    Point triangle[4];      /* allow room for polygon() to close triangle */
     Point *ptr1, *ptr2, *xybeg;
 
     line_len2 = dx = dy = 0;
 
     /* Set up the arrow-head length and width as a function of line width. */
-    temp = vwk->line_width;
-    arrow_len = (temp < 4) ? 8 : (3 * temp - 1);
+    arrow_len = (vwk->line_width < 4) ? 8 : (3 * vwk->line_width - 1);
     arrow_wid = arrow_len / 2;
 
     /* Initialize the beginning pointer. */
@@ -1328,7 +1414,7 @@ static void draw_arrow(Vwk * vwk, Point * point, int count, int inc)
 
         ptr1 += inc;
         dx = ptr2->x - ptr1->x;
-        dy = mul_div(ptr2->y - ptr1->y, ysize, xsize);
+        dy = mul_div_round(ptr2->y - ptr1->y, ysize, xsize);
 
         /* Get length of vector connecting the point with the end point. */
         /* If the vector is of sufficient length, the search is over. */
@@ -1348,15 +1434,17 @@ static void draw_arrow(Vwk * vwk, Point * point, int count, int inc)
     /* Rotate the arrow-head height and base vectors.  Perform calculations */
     /* in 1000x space.                                                      */
 
-    ht_x = mul_div(arrow_len, mul_div(dx, 1000, line_len), 1000);
-    ht_y = mul_div(arrow_len, mul_div(dy, 1000, line_len), 1000);
-    base_x = mul_div(arrow_wid, mul_div(dy, -1000, line_len), 1000);
-    base_y = mul_div(arrow_wid, mul_div(dx, 1000, line_len), 1000);
+    dxfactor = mul_div_round(dx, 1000, line_len);
+    dyfactor = mul_div_round(dy, 1000, line_len);
+    ht_x = mul_div_round(arrow_len, dxfactor, 1000);
+    ht_y = mul_div_round(arrow_len, dyfactor, 1000);
+    base_x = mul_div_round(arrow_wid, -dyfactor, 1000);
+    base_y = mul_div_round(arrow_wid, dxfactor, 1000);
 
     /* Transform the y offsets back to the correct aspect ratio space. */
 
-    ht_y = mul_div(ht_y, xsize, ysize);
-    base_y = mul_div(base_y, xsize, ysize);
+    ht_y = mul_div_round(ht_y, xsize, ysize);
+    base_y = mul_div_round(base_y, xsize, ysize);
 
     /* Build a polygon into a local array first */
     ptr1 = triangle;
@@ -1403,9 +1491,8 @@ void arrow(Vwk * vwk, Point * point, int count)
     }
 
     /* ending point is arrowed. */
-    point += count - 1;
     if (s_endsty & ARROWED) {
-        draw_arrow(vwk, point, count, -1);
+        draw_arrow(vwk, point+count-1, count, -1);
     }
 
     /* Restore the attribute environment. */
@@ -1428,14 +1515,16 @@ void arrow(Vwk * vwk, Point * point, int count)
  *
  * This routine is more or less the one from the original VDI asm
  * code, with the following exception:
- *  . when the writing mode is XOR, and this is not the last line
+ *  . When the writing mode was XOR, and this was not the last line
  *    in a polyline, the original code decremented the x coordinate
- *    of the ending point.  this prevented polylines from xor'ing
- *    themselves at the intersection points.  this was done in both
- *    the XOR handler within abline() and, for horizontal lines,
- *    before calling a separate function to draw a horizontal line.
- *    NOTE: the determination of 'last line or not' was done via
- *    the _LSTLIN variable which was set in the polyline() function.
+ *    of the ending point.  This prevented polylines from xor'ing
+ *    themselves at the intermediate points.  The determination of
+ *    'last line or not' was done via the LSTLIN variable which was
+ *    set in the polyline() function.
+ * We now handle this situation as follows:
+ *  . The polyline() function still sets the LSTLIN variable.  The
+ *    abline() function (q.v.) adjusts the line end coordinates
+ *    accordingly.
  *
  */
 static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
@@ -1482,12 +1571,12 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
             e2 = 2*dx;
 
             switch (wrt_mode) {
-            case 3:              /* reverse transparent  */
+            case WM_ERASE:      /* reverse transparent  */
                 if (color & 0x0001) {
                     for (loopcnt=dx;loopcnt >= 0;loopcnt--) {
                         rolw1(linemask);        /* get next bit of line style */
-                        if (linemask&0x0001)
-                            *addr &= ~bit;
+                        if (!(linemask&0x0001))
+                            *addr |= bit;
                         rorw1(bit);
                         if (bit&0x8000)
                             addr += xinc;
@@ -1500,8 +1589,8 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
                 } else {
                     for (loopcnt=dx;loopcnt >= 0;loopcnt--) {
                         rolw1(linemask);        /* get next bit of line style */
-                        if (linemask&0x0001)
-                            *addr |= bit;
+                        if (!(linemask&0x0001))
+                            *addr &= ~bit;
                         rorw1(bit);
                         if (bit&0x8000)
                             addr += xinc;
@@ -1513,7 +1602,7 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
                     }
                 }
                 break;
-            case 2:              /* xor */
+            case WM_XOR:        /* xor */
                 for (loopcnt=dx;loopcnt >= 0;loopcnt--) {
                     rolw1(linemask);        /* get next bit of line style */
                     if (linemask&0x0001)
@@ -1528,7 +1617,7 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
                     }
                 }
                 break;
-            case 1:              /* or */
+            case WM_TRANS:      /* or */
                 if (color & 0x0001) {
                     for (loopcnt=dx;loopcnt >= 0;loopcnt--) {
                         rolw1(linemask);        /* get next bit of line style */
@@ -1559,7 +1648,7 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
                     }
                 }
                 break;
-            case 0:              /* rep */
+            case WM_REPLACE:    /* rep */
                 if (color & 0x0001) {
                     for (loopcnt=dx;loopcnt >= 0;loopcnt--) {
                         rolw1(linemask);        /* get next bit of line style */
@@ -1598,12 +1687,12 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
             e2 = 2*dy;
 
             switch (wrt_mode) {
-            case 3:              /* reverse transparent */
+            case WM_ERASE:      /* reverse transparent */
                 if (color & 0x0001) {
                     for (loopcnt=dy;loopcnt >= 0;loopcnt--) {
                         rolw1(linemask);        /* get next bit of line style */
-                        if (linemask&0x0001)
-                            *addr &= ~bit;
+                        if (!(linemask&0x0001))
+                            *addr |= bit;
                         addr += yinc;
                         eps += e1;
                         if (eps >= 0 ) {
@@ -1616,8 +1705,8 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
                 } else {
                     for (loopcnt=dy;loopcnt >= 0;loopcnt--) {
                         rolw1(linemask);        /* get next bit of line style */
-                        if (linemask&0x0001)
-                            *addr |= bit;
+                        if (!(linemask&0x0001))
+                            *addr &= ~bit;
                         addr += yinc;
                         eps += e1;
                         if (eps >= 0 ) {
@@ -1629,7 +1718,7 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
                     }
                 }
                 break;
-            case 2:              /* xor */
+            case WM_XOR:        /* xor */
                 for (loopcnt=dy;loopcnt >= 0;loopcnt--) {
                     rolw1(linemask);        /* get next bit of line style */
                     if (linemask&0x0001)
@@ -1644,7 +1733,7 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
                     }
                 }
                 break;
-            case 1:              /* or */
+            case WM_TRANS:      /* or */
                 if (color & 0x0001) {
                     for (loopcnt=dy;loopcnt >= 0;loopcnt--) {
                         rolw1(linemask);        /* get next bit of line style */
@@ -1675,7 +1764,7 @@ static void draw_line(const Line *line, WORD wrt_mode, UWORD color)
                     }
                 }
                 break;
-            case 0:              /* rep */
+            case WM_REPLACE:    /* rep */
                 if (color & 0x0001) {
                     for (loopcnt=dy;loopcnt >= 0;loopcnt--) {
                         rolw1(linemask);        /* get next bit of line style */
@@ -1750,24 +1839,24 @@ static void vertical_line(const Line *line, WORD wrt_mode, UWORD color)
         linemask = LN_MASK;
 
         switch(wrt_mode) {
-        case 3:              /* reverse transparent */
+        case WM_ERASE:          /* reverse transparent */
             if (color & 0x0001) {
                 for (loopcnt = dy; loopcnt >= 0; loopcnt--) {
                     rolw1(linemask);        /* get next bit of line style */
-                    if (linemask&0x0001)
-                        *addr &= bitcomp;
+                    if (!(linemask&0x0001))
+                        *addr |= bit;
                     addr += yinc;
                 }
             } else {
                 for (loopcnt = dy; loopcnt >= 0; loopcnt--) {
                     rolw1(linemask);        /* get next bit of line style */
-                    if (linemask&0x0001)
-                        *addr |= bit;
+                    if (!(linemask&0x0001))
+                        *addr &= bitcomp;
                     addr += yinc;
                 }
             }
             break;
-        case 2:              /* xor */
+        case WM_XOR:            /* xor */
             for (loopcnt = dy; loopcnt >= 0; loopcnt--) {
                 rolw1(linemask);        /* get next bit of line style */
                 if (linemask&0x0001)
@@ -1775,7 +1864,7 @@ static void vertical_line(const Line *line, WORD wrt_mode, UWORD color)
                 addr += yinc;
             }
             break;
-        case 1:              /* or */
+        case WM_TRANS:          /* or */
             if (color & 0x0001) {
                 for (loopcnt = dy; loopcnt >= 0; loopcnt--) {
                     rolw1(linemask);        /* get next bit of line style */
@@ -1792,7 +1881,7 @@ static void vertical_line(const Line *line, WORD wrt_mode, UWORD color)
                 }
             }
             break;
-        case 0:              /* rep */
+        case WM_REPLACE:        /* rep */
             if (color & 0x0001) {
                 for (loopcnt = dy; loopcnt >= 0; loopcnt--) {
                     rolw1(linemask);        /* get next bit of line style */
@@ -1825,6 +1914,7 @@ static void vertical_line(const Line *line, WORD wrt_mode, UWORD color)
  *     line         = pointer to structure containing coordinates
  *     v_planes     = number of video planes
  *     LN_MASK      = line mask (for dashed/dotted lines)
+ *     LSTLIN       = flag: TRUE iff this is the last line of a polyline
  *     wrt_mode     = writing mode:
  *                          0 => replace mode.
  *                          1 => or mode.
@@ -1834,7 +1924,7 @@ static void vertical_line(const Line *line, WORD wrt_mode, UWORD color)
  * output:
  *     LN_MASK rotated to proper alignment with x coordinate of line end
  */
-void abline(const Line *line, WORD wrt_mode, UWORD color)
+void abline(const Line *line, const WORD wrt_mode, UWORD color)
 {
     Line ordered;
     UWORD x1,y1,x2,y2;          /* the coordinates */
@@ -1847,7 +1937,7 @@ void abline(const Line *line, WORD wrt_mode, UWORD color)
 #if CONF_WITH_BLITTER
         if (blitter_is_enabled)
         {
-            blit_vline(line, wrt_mode, color);
+            hwblit_vertical_line(line, wrt_mode, color);
             return;
         }
         else
@@ -1872,6 +1962,19 @@ void abline(const Line *line, WORD wrt_mode, UWORD color)
         y1 = line->y1;
         x2 = line->x2;
         y2 = line->y2;
+    }
+
+    /*
+     * copy a DRI kludge: if we're in XOR mode, avoid XORing intermediate
+     * points in a polyline.  we do it slightly differently than DRI with
+     * slightly differing results - but it's a kludge in either case.
+     */
+    if ((wrt_mode == WM_XOR) && !LSTLIN)
+    {
+        if (x1 != x2)
+            x2--;
+        else if (y1 != y2)
+            y2--;
     }
 
     /*
