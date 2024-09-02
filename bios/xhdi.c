@@ -1,7 +1,7 @@
 /*
  * xhdi.c - XHDI handler
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2020 The EmuTOS development team
  *
  * Authors:
  *  PES   Petr Stehlik
@@ -19,7 +19,6 @@
 #include "blkdev.h"
 #include "gemerror.h"
 #include "string.h"
-#include "cookie.h"
 #include "disk.h"
 #include "ahdi.h"
 
@@ -37,11 +36,6 @@ static XHDI_HANDLER next_handler; /* Next handler installed by XHNewCookie() */
 static ULONG XHDI_drvmap;
 
 /*---Functions ---*/
-
-void create_XHDI_cookie(void)
-{
-    cookie_add(COOKIE_XHDI, (long)xhdi_vec);
-}
 
 void init_XHDI_drvmap(void)
 {

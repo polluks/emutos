@@ -1,7 +1,7 @@
 /*
  * machine.h - declarations about the machine type and capabilities
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2024 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -34,16 +34,40 @@
 #define MONSTER_REG         0xfffffe00UL
 
 /*
+ * standard bus numbers
+ */
+#define ACSI_BUS            0
+#define SCSI_BUS            1
+#define IDE_BUS             2
+#define SDMMC_BUS           3
+
+#if CONF_WITH_SDMMC
+# define MAX_BUS            SDMMC_BUS
+#elif CONF_WITH_IDE
+# define MAX_BUS            IDE_BUS
+#elif CONF_WITH_SCSI
+# define MAX_BUS            SCSI_BUS
+#else
+# define MAX_BUS            ACSI_BUS
+#endif
+
+extern ULONG detected_busses;
+
+/*
  * some useful cookies.
  */
 
-extern long cookie_mch;
-extern long cookie_vdo;
-extern long cookie_snd;
-#if CONF_WITH_DIP_SWITCHES
-extern long cookie_swi;
+extern ULONG cookie_mch;
+extern ULONG cookie_vdo;
+extern ULONG cookie_snd;
+#if CONF_WITH_FDC
+extern ULONG cookie_fdc;
 #endif
-extern long cookie_akp;
+#if CONF_WITH_DIP_SWITCHES
+extern ULONG cookie_swi;
+#endif
+extern ULONG cookie_akp;
+extern ULONG cookie_idt;
 
 /*
  * these are != 0 if the feature is present
@@ -59,6 +83,11 @@ extern long cookie_akp;
 /* address bus width */
 #if CONF_WITH_ADVANCED_CPU
 BOOL detect_32bit_address_bus(void);
+#endif
+
+/* XHDI vector table */
+#if CONF_WITH_XHDI
+long xhdi_vec(UWORD opcode, ...);   /* In bios/natfeat.S */
 #endif
 
 /* detect the available hardware */

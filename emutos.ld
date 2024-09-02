@@ -1,7 +1,7 @@
 /*
  * emutos.ld - Custom linker script for EmuTOS ROM
  *
- * Copyright (C) 2016-2019 The EmuTOS development team
+ * Copyright (C) 2016-2024 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -20,11 +20,11 @@ OUTPUT_FORMAT(binary)
 #if !EMUTOS_LIVES_IN_RAM
 
 /* The ROM address depends on the target */
-#if defined (MACHINE_AMIGA)
+#if defined(MACHINE_AMIGA)
 # define ROM_ORIGIN 0x00fc0000
-#elif defined (TARGET_CART)
+#elif defined(TARGET_CART)
 # define ROM_ORIGIN 0x00fa0000
-#elif defined (TARGET_192)
+#elif defined(TARGET_192)
 # define ROM_ORIGIN 0x00fc0000
 #else
 # define ROM_ORIGIN 0x00e00000
@@ -101,7 +101,7 @@ SECTIONS
      * Variables requiring very low addresses, while being accessible
      * from user mode, can be put here.
      */
-    .low_stram :
+    .low_stram : SUBALIGN(2)
     {
         __low_stram_start = .;
         obj/lowstram.o(.bss COMMON)
@@ -115,14 +115,14 @@ SECTIONS
     /* The TEXT segment contains EmuTOS executable code and read-only data.
      * It is always read-only, so it can safely live in ROM.
      */
-    .text :
+    .text : SUBALIGN(2)
     {
         CREATE_OBJECT_SYMBOLS
         __text = .;
         *(.text)
         *(.rodata .rodata.*) /* Only present in ELF objects */
         __etext = .;
-    } >REGION_READ_ONLY
+    } >REGION_READ_ONLY =0x4afc
 
     /* FIXME: Our DATA segment is currently read-only.
      * It currently lives in the ROM, just after the TEXT segment.
@@ -130,7 +130,7 @@ SECTIONS
      * Since a read-only DATA segment is useless, we try to keep it empty by
      * making all initialized variables const, so they go to the TEXT segment.
      */
-    .data :
+    .data : SUBALIGN(2)
     {
         __data = .;
         *(.data)
@@ -140,7 +140,7 @@ SECTIONS
     /* The BSS segment contains uninitialized global variables.
      * It will be cleared by the startup code.
      */
-    .bss :
+    .bss : SUBALIGN(2)
     {
         __bss = .;
         *(.bss COMMON)
@@ -149,9 +149,10 @@ SECTIONS
 
     /* This section is always the last one stored in ST-RAM.
      * It is usually empty, just used to calculate the last address
-     * of ST-RAM statically used by EmuTOS.
+     * of ST-RAM statically used by EmuTOS. If needed, the address
+     * is rounded up to the next multiple of four.
      */
-    .laststram :
+    .laststram : ALIGN(4)
     {
         __end_os_stram = .;
     } >stram
@@ -175,17 +176,6 @@ SECTIONS
 }
 
 #ifdef ELF_TOOLCHAIN
-/* Our code is compiled with -fleading-underscore, so the references to external
- * libraries will include a leading underscore. However, libgcc was not compiled
- * with that option, so its symbols do not start with a leading underscore. So
- * we need to define leading-underscore aliases to the no-leading-underscore
- * functions in libgcc.
- */
-#define DEFINE_SYMBOL_ALIAS(alias, impl) EXTERN(impl) PROVIDE(alias = impl);
-#define ELF_LIB_REF(symbol) DEFINE_SYMBOL_ALIAS(_##symbol, symbol)
-ELF_LIB_REF(__mulsi3)
-ELF_LIB_REF(__divsi3)
-ELF_LIB_REF(__modsi3)
-ELF_LIB_REF(__udivsi3)
-ELF_LIB_REF(__umodsi3)
+/* Fix leading-underscore issues */
+#include "tools/elfalias.ld"
 #endif

@@ -1,7 +1,7 @@
 /*
  * machine.c - detection of machine type
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2024 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -27,8 +27,11 @@
 #include "xhdi.h"
 #include "string.h"
 #include "dmasound.h"
+#include "dsp.h"
+#include "acsi.h"
 #include "scsi.h"
 #include "ide.h"
+#include "scsidriv.h"
 #include "asm.h"
 #include "delay.h"
 #include "mfp.h"
@@ -38,22 +41,22 @@
 #include "dma.h"
 #include "nova.h"
 #include "biosext.h"
-#ifdef MACHINE_AMIGA
 #include "amiga.h"
-#endif
 
 #if CONF_WITH_ADVANCED_CPU
 UBYTE is_bus32; /* 1 if address bus is 32-bit, 0 if it is 24-bit */
 #endif
 
-long cookie_vdo;
+ULONG detected_busses;  /* bitmap of i/o busses detected */
+
+ULONG cookie_vdo;
 #if CONF_WITH_FDC
-long cookie_fdc;
+ULONG cookie_fdc;
 #endif
-long cookie_snd;
-long cookie_mch;
+ULONG cookie_snd;
+ULONG cookie_mch;
 #if CONF_WITH_DIP_SWITCHES
-long cookie_swi;
+ULONG cookie_swi;
 #endif
 
 
@@ -93,7 +96,7 @@ static void detect_modectl(void)
 #endif
 
 /*
- * Tests video capabilities (STEnhanced Shifter, TT Shifter and VIDEL)
+ * Tests video capabilities (STe Enhanced Shifter, TT Shifter and VIDEL)
  */
 static void detect_video(void)
 {
@@ -137,6 +140,24 @@ static void detect_video(void)
         has_videl = 1;
 
     KDEBUG(("has_videl = %d\n", has_videl));
+
+    /*
+     * The Falcon Bus Control Register uses the following bits:
+     *   0x40 : type of start (0=cold, 1=warm)
+     *   0x20 : STe Bus emulation (0=on, 1=off)
+     *   0x08 : blitter control (0=on, 1=off)
+     *   0x04 : blitter speed (0=8MHz, 1=16MHz)
+     *   0x01 : cpu speed (0=8MHz, 1=16MHz)
+     * Source: Hatari source code
+     *
+     * STe Bus emulation needs to be switched off for
+     * bus-error-based hardware detection to work on the Falcon.
+     */
+    if (has_videl)      /* i.e. it's a Falcon */
+    {
+        volatile UBYTE *fbcr = (UBYTE *)FALCON_BUS_CTL;
+        *fbcr |= 0x25;  /* set STe Bus emulation off, 16MHz blitter & CPU */
+    }
 #endif
 }
 
@@ -219,6 +240,58 @@ static void detect_monster(void)
 }
 
 #endif /* CONF_WITH_MONSTER */
+
+#if CONF_WITH_MAGNUM
+
+int has_magnum;
+
+/*
+ * These are the magic addresses for the activation sequence used by the
+ * Magnum driver. Actually, the least significant 16 bits are 'don't care'
+ * due to the hardware design.
+ */
+#define MAGNUM_MAGIC1    (0x6C4710ul)
+#define MAGNUM_MAGIC2    (0x5D1234ul)
+#define MAGNUM_MAGIC3    (0x6D3148ul)
+
+#define MAGNUM_MEM_START (0x400000ul)
+
+static void detect_magnum(void)
+{
+    /* Assume no Magnum RAM expansion card. */
+    has_magnum = 0;
+
+    do
+    {
+        /* ARAnyM cannot have a Magnum. */
+        if (IS_ARANYM)
+            break;
+        /*
+         * Magnum will be initially disabled. Thus check that there *is*
+         * a bus error at 4 MB. Otherwise there already is RAM or another
+         * peripheral at that address and not a Magnum.
+         */
+        if (check_read_byte(MAGNUM_MEM_START))
+            break;
+        /*
+         * Magnum is enabled by a sequence of reads to magic addresses.
+         * These reads cause a bus-error on the Magnum. If they don't,
+         * it's not a Magnum card.
+         */
+        if (check_read_byte(MAGNUM_MAGIC1))
+            break;
+        if (check_read_byte(MAGNUM_MAGIC2))
+            break;
+        if (check_read_byte(MAGNUM_MAGIC3))
+            break;
+        /* If Magnum is present, an access to 4 MB must now work. */
+        has_magnum = check_read_byte(MAGNUM_MEM_START);
+    } while (0);
+
+    KDEBUG(("has_magnum = %d\n", has_magnum));
+}
+
+#endif /* CONF_WITH_MAGNUM */
 
 #if CONF_WITH_BLITTER
 
@@ -351,6 +424,11 @@ static void setvalue_snd(void)
         cookie_snd |= SND_16BIT | SND_MATRIX;
     }
 
+    if (HAS_DSP)
+    {
+        cookie_snd |= SND_DSP;
+    }
+
 #if CONF_WITH_DIP_SWITCHES
     if (has_dip_switches)
     {
@@ -390,10 +468,14 @@ static void add_cookie_frb(void)
     need_frb |= has_monster;
 #endif
 
+#if CONF_WITH_MAGNUM
+    need_frb |= has_magnum;
+#endif
+
     if (need_frb)
     {
         UBYTE *cookie_frb = balloc_stram(FRB_SIZE, FALSE);
-        cookie_add(COOKIE_FRB, (long)cookie_frb);
+        cookie_add(COOKIE_FRB, (ULONG)cookie_frb);
         KDEBUG(("cookie_frb = %p\n", cookie_frb));
     }
 }
@@ -437,6 +519,26 @@ static void aranym_machine_detect(void)
     KDEBUG(("is_aranym = %d\n", is_aranym));
 }
 #endif
+
+static ULONG check_busses(void)
+{
+    ULONG found = 0UL;
+
+#if CONF_WITH_ACSI
+    if (detect_acsi())
+        found |= (1 << ACSI_BUS);
+#endif
+#if CONF_WITH_SCSI
+    if (detect_scsi())
+        found |= (1 << SCSI_BUS);
+#endif
+#if CONF_WITH_IDE
+    if (detect_ide())
+        found |= (1 << IDE_BUS);
+#endif
+
+    return found;
+}
 
 /* Detect optional hardware and fill has_* variables accordingly.
  * Those detection routines must *NOT* rely on cookies,
@@ -486,18 +588,19 @@ void machine_detect(void)
 #if CONF_WITH_DMASOUND
     detect_dmasound();
 #endif
+#if CONF_WITH_DSP
+    detect_dsp();
+#endif
 #if CONF_WITH_DIP_SWITCHES
     detect_dip_switches();
 #endif
 #if CONF_WITH_BLITTER
     detect_blitter();
 #endif
-#if CONF_WITH_IDE
-    detect_ide();
-#endif
-#if CONF_WITH_SCSI
-    detect_scsi();
-#endif
+
+    detected_busses = check_busses();
+    KDEBUG(("detected_busses = 0x%lx\n", detected_busses));
+
 #if CONF_WITH_MONSTER
     detect_monster();
     if (has_monster)
@@ -505,6 +608,9 @@ void machine_detect(void)
         detect_monster_rtc();
         KDEBUG(("has_monster_rtc = %d\n", has_monster_rtc));
     }
+#endif
+#if CONF_WITH_MAGNUM
+    detect_magnum();
 #endif
 #if CONF_WITH_NOVA
     if (!IS_ARANYM)
@@ -517,20 +623,6 @@ void machine_detect(void)
  */
 void machine_init(void)
 {
-#if CONF_WITH_VIDEL
-volatile UBYTE *fbcr = (UBYTE *)FALCON_BUS_CTL;
-/* the Falcon Bus Control Register uses the following bits:
- *   0x40 : type of start (0=cold, 1=warm)
- *   0x20 : STe Bus emulation (0=on, 1=off)
- *   0x08 : blitter control (0=on, 1=off)
- *   0x04 : blitter speed (0=8MHz, 1=16MHz)
- *   0x01 : cpu speed (0=8MHz, 1=16MHz)
- * source: Hatari source code
- */
-    if (has_videl)      /* i.e. it's a Falcon */
-        *fbcr |= 0x25;  /* set STe Bus emulation off, blitter on, 16MHz blitter & CPU */
-#endif
-
 #if !CONF_WITH_RESET
 /*
  * we must disable interrupts here, because the reset instruction hasn't
@@ -575,7 +667,7 @@ void fill_cookie_jar(void)
 #ifdef __mcoldfire__
     cookie_add(COOKIE_COLDFIRE, 0);
     setvalue_mcf();
-    cookie_add(COOKIE_MCF, (long)&cookie_mcf);
+    cookie_add(COOKIE_MCF, (ULONG)&cookie_mcf);
 #else
     /* this is detected by detect_cpu(), called from processor_init() */
     cookie_add(COOKIE_CPU, mcpu);
@@ -686,18 +778,22 @@ void fill_cookie_jar(void)
 #if DETECT_NATIVE_FEATURES
     if (has_natfeats())
     {
-        cookie_add(COOKIE_NATFEAT, (long)&natfeat_cookie);
+        cookie_add(COOKIE_NATFEAT, (ULONG)&natfeat_cookie);
     }
 #endif
 
 #if CONF_WITH_XHDI
-    create_XHDI_cookie();
+    cookie_add(COOKIE_XHDI, (ULONG)xhdi_vec);
+#endif
+
+#if CONF_WITH_SCSI_DRIVER
+    cookie_add(COOKIE_SCSIDRIV, (ULONG)&scsidriv_root);
 #endif
 
 #if !CONF_WITH_MFP
     /* Set the _5MS cookie with the address of the 200 Hz system timer
      * interrupt vector so FreeMiNT can hook it. */
-    cookie_add(COOKIE__5MS, (long)&vector_5ms);
+    cookie_add(COOKIE__5MS, (ULONG)&vector_5ms);
 #endif
 }
 
@@ -734,6 +830,8 @@ const char * machine_name(void)
     return "FireBee";
 #elif defined(MACHINE_AMIGA)
     return amiga_machine_name();
+#elif defined(MACHINE_LISA)
+    return "Apple Lisa";
 #elif defined(MACHINE_M548X)
     return m548x_machine_name();
 #else

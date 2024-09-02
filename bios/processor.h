@@ -1,7 +1,7 @@
 /*
  * processor.h - declarations for processor type check
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2024 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -29,10 +29,6 @@
  *      . in Pexec() when a program is loaded.
  * 2. Instruction cache is enabled (by the preboot).  It is flushed/
  *    invalidated in Pexec() after a program is loaded.
- * 3. The processor speed must be defined in SDCLK_FREQUENCY_MHZ.  This
- *    is used to derive a value that is used for timing short delays via
- *    a small instruction-looping routine.  See delay.c.
- *
  *
  * Non-ColdFire processors
  * =======================
@@ -93,8 +89,8 @@ void processor_init(void);
  * invalidate_instruction_cache() are declared in include/biosext.h
  */
 void instruction_cache_kludge(void *start,long size);
-extern LONG mcpu;
-extern LONG fputype;
+extern ULONG mcpu;
+extern ULONG fputype;
 extern WORD longframe;
 
 #if CONF_WITH_APOLLO_68080

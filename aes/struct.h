@@ -2,7 +2,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2019 The EmuTOS development team
+*                 2002-2022 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -18,6 +18,9 @@
 #ifndef GEMSTRUCT_H
 #define GEMSTRUCT_H
 
+#include "aesdefs.h"
+#include "obdefs.h"
+
 typedef struct aespd   AESPD;           /* process descriptor           */
 typedef struct uda     UDA;             /* user stack data area         */
 typedef struct cdastr  CDA;             /* console data area structure  */
@@ -26,6 +29,7 @@ typedef struct evb     EVB;             /* event block                  */
 typedef struct cqueue  CQUEUE;          /* console kbd queue            */
 typedef struct spb     SPB;             /* sync parameter block         */
 typedef struct fpd     FPD;             /* fork process descriptor      */
+typedef struct smib    SMIB;            /* submenu information block    */
 
 typedef UWORD   EVSPEC;
 
@@ -33,13 +37,20 @@ typedef UWORD   EVSPEC;
 
 /*
  * EVBs are used to track events that an AES process is waiting on.  the
- * maximum number of events that a process can wait for is 6 (MU_KEYBD,
- * MU_BUTTON, MU_M1, MU_M2, MU_MESAG, MU_TIMER), when ev_multi() is used.
+ * maximum number of events per process is the number of unique bitmasks
+ * for ev_multi(): MU_KEYBD, MU_BUTTON, MU_M1, MU_M2, MU_MESAG, MU_TIMER
+ * (plus MU_M3 for menu extension support).
  *
- * therefore we create 6 EVBs per AES process and ensure that we cannot
- * run out of EVBs.
+ * therefore we create 6 (or 7) EVBs per AES process and ensure that we
+ * cannot run out of EVBs.
  */
+#if CONF_WITH_MENU_EXTENSION
+#define EVBS_PER_PD     7               /* EVBs per AES process */
+#else
 #define EVBS_PER_PD     6               /* EVBs per AES process */
+#endif
+
+#define NUM_SMIBS   128                 /* SMIBs per process (when allocated) */
 
 #define KBD_SIZE 8
 #define QUEUE_SIZE 128
@@ -69,12 +80,11 @@ struct cdastr               /* console data area */
 
 struct uda                  /* user stack data area */
 {
-        WORD    u_insuper;              /*   0  in supervisor flag       */
-        ULONG   u_regs[15];             /*   2  d0-d7, a0-a6             */
-        ULONG   *u_spsuper;             /*  3E  supervisor stack         */
-        ULONG   *u_spuser;              /*  42  user stack               */
-        ULONG   *u_oldspsuper;          /*  46  old ssp, used in trapaes [gemdosif.S] */
-        ULONG   u_super[AES_STACK_SIZE];/*  4A  */
+        ULONG   u_regs[15];             /*   0  d0-d7, a0-a6             */
+        ULONG   *u_spsuper;             /*  3C  supervisor stack         */
+        ULONG   *u_spuser;              /*  40  user stack               */
+        ULONG   *u_oldspsuper;          /*  44  old ssp, used in trapaes [gemdosif.S] */
+        ULONG   u_super[AES_STACK_SIZE];/*  48  */
         ULONG   u_supstk;
 } ;
 
@@ -86,10 +96,10 @@ struct uda                  /* user stack data area */
 
 struct evb                  /* event block */
 {
-        EVB     *e_nextp;       /* link to next event on PD event list */
+        EVB     *e_nextp;       /* link to next event on AESPD event list */
         EVB     *e_link;        /* link to next block on event chain */
         EVB     *e_pred;        /* link to prev block on event chain */
-        AESPD   *e_pd;          /* owner PD (data for fork) */
+        AESPD   *e_pd;          /* owner AESPD (data for fork) */
         LONG    e_parm;         /* parm for request -> event comm */
         WORD    e_flag;
         EVSPEC  e_mask;         /* mask for event notification */
@@ -100,8 +110,7 @@ struct evb                  /* event block */
 /* p_name */
 #define AP_NAMELEN  8           /* architectural */
 /* p_stat */
-#define         WAITIN          0x0001
-#define         SWITCHIN        0x8000
+#define WAITIN      0x0001      /* process is waiting for an event */
 /* p_flags */
 #define AP_OPEN     0x0001      /* application is between appl_init() & appl_exit() */
 #define AP_MESAG    0x0002      /* application has waited for a message */
@@ -111,12 +120,12 @@ struct aespd                /* process descriptor */
 {
         AESPD   *p_link;        /*  0 */
         AESPD   *p_thread;      /*  4 */
-        UDA     *p_uda;         /*  8 */
+        UDA     *p_uda;         /*  8  UDA - assembler code expects this offset */
 
         char    p_name[AP_NAMELEN]; /*  C */
 
         CDA     *p_cda;         /* 14  cio data area        */
-        LONG    p_ldaddr;       /* 18  long addr. of load   */
+        LONG    p_ldaddr;       /* 18  load address - assembler code expects this offset */
         WORD    p_pid;          /* 1C */
         WORD    p_stat;         /* 1E */
 
@@ -128,9 +137,19 @@ struct aespd                /* process descriptor */
         EVB     *p_evlist;      /* 28 */
         EVB     *p_qdq;         /* 2C */
         EVB     *p_qnq;         /* 30 */
-        char    *p_qaddr;       /* 34 */
-        WORD    p_qindex;       /* 38 */
-        char    p_queue[QUEUE_SIZE];   /* 3A */
+
+        struct {            /* used by ctlmgr() to pass WM_ARROWED msg to event handlers */
+            WORD action;        /* action to perform (WA_UPLINE etc) [-ve means no msg] */
+            WORD wh;            /* window handle of applicable window */
+        }       p_msg;
+
+#if CONF_WITH_GRAF_MOUSE_EXTENSION
+        MFORM   p_mouse;        /* used by graf_mouse(SAVE,RESTORE) */
+#endif
+
+        char    *p_qaddr;       /* */
+        WORD    p_qindex;       /* */
+        char    p_queue[QUEUE_SIZE];    /* */
         char    p_appdir[LEN_ZPATH+2];  /* directory containing the executable */
                                         /* (includes trailing path separator)  */
 };
@@ -157,5 +176,13 @@ struct fpd                  /* fork process descriptor */
         FCODE   f_code;
         LONG    f_data;
 } ;
+
+struct smib                 /* submenu info block */
+{
+        WORD    s_usage;        /* usage count */
+        OBJECT  *s_tree;
+        WORD    s_menu;
+        WORD    s_start;
+};
 
 #endif /* GEMSTRUCT_H */

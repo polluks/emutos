@@ -2,7 +2,7 @@
  * vt52.c - vt52 like screen handling routines
  *
  *
- * Copyright (C) 2013-2019 The EmuTOS development team
+ * Copyright (C) 2013-2021 The EmuTOS development team
  * Copyright (C) 2004 Martin Doering
  *
  * Authors:
@@ -77,8 +77,6 @@ static void get_row(WORD);
 static void get_column(WORD);
 
 void blink(void);
-
-void (*con_state)(WORD);        /* state of conout state machine */
 
 
 /* jumptable for ESC + uppercase character */
@@ -192,7 +190,7 @@ static void normal_ascii(WORD ch)
         con_state = esc_ch1;    /* set constate to handle esc codes */
     }
 
-    /* Other control haracters */
+    /* Other control characters */
     else if ( ch >= 7 && ch <= 13 ) {
 #if CONF_SERIAL_CONSOLE_ANSI
         bconout(1, ch);
@@ -273,9 +271,16 @@ static void get_row(WORD ch)
 static void get_column(WORD ch)
 {
     int row, col;
+    char ansi[20];
+
+    MAYBE_UNUSED(ansi);
 
     col = ch - POSITION_BIAS;           /* Remove space bias */
     row = save_row;
+#if CONF_SERIAL_CONSOLE_ANSI
+    sprintf(ansi, "\033[%d;%dH", row + 1, col + 1);
+    bconout_str(1, ansi);
+#endif
     move_cursor(col,row);
     con_state = normal_ascii;           /* Next char is not special */
 }
@@ -556,6 +561,9 @@ static void reverse_linefeed(void)
  */
 static void insert_line(void)
 {
+#if CONF_SERIAL_CONSOLE_ANSI
+    bconout_str(1, "\033[L");
+#endif
     cursor_off();               /* hide cursor */
     scroll_down(v_cur_cy);      /* scroll down 1 line & blank current line */
     move_cursor(0, v_cur_cy);   /* move cursor to beginning of line */
@@ -568,6 +576,9 @@ static void insert_line(void)
  */
 static void delete_line(void)
 {
+#if CONF_SERIAL_CONSOLE_ANSI
+    bconout_str(1, "\033[M");
+#endif
     cursor_off();               /* hide cursor */
     scroll_up(v_cur_cy);        /* scroll up 1 line & blank bottom line */
     move_cursor(0, v_cur_cy);   /* move cursor to beginning of line */
@@ -747,18 +758,17 @@ static void erase_from_bol_impl(void)
     s_cur_x = v_cur_cx;
     s_cur_y = v_cur_cy;
 
-    /* are we in column 0?*/
-    if ( v_cur_cx == 0 )
-        ascii_out(' ');         /* output a space */
-    else {
-        /* test, if x is even or odd */
-        if ( IS_ODD(v_cur_cx) ) {
-            ascii_out(' ');     /* first output a space */
-            blank_out (0, v_cur_cy, v_cur_cx - 2, v_cur_cy);
-        }
-        else
-            blank_out (0, v_cur_cy, v_cur_cx, v_cur_cy);
+    /*
+     * because blank_out() requires the ending x position to be
+     * odd, we need to handle the two possibilities separately
+     */
+    if ( !IS_ODD(s_cur_x) ) {
+        ascii_out(' ');     /* first output a space */
+        if (s_cur_x)
+            blank_out(0, s_cur_y, s_cur_x-1, s_cur_y);
     }
+    else
+        blank_out(0, s_cur_y, s_cur_x, s_cur_y);
 
     move_cursor(s_cur_x, s_cur_y); /* restore cursor position */
     cursor_on_cnt();            /* show cursor */
@@ -786,6 +796,9 @@ static void erase_from_bol(void)
  */
 static void line_wrap_on(void)
 {
+#if CONF_SERIAL_CONSOLE_ANSI
+    bconout_str(1, "\033[7h");
+#endif
     v_stat_0 |= M_CEOL;    /* set the eol handling bit */
 }
 
@@ -795,6 +808,9 @@ static void line_wrap_on(void)
  */
 static void line_wrap_off(void)
 {
+#if CONF_SERIAL_CONSOLE_ANSI
+    bconout_str(1, "\033[7l");
+#endif
     v_stat_0 &= ~M_CEOL;    /* clear the eol handling bit */
 }
 
@@ -878,7 +894,7 @@ WORD cursconf(WORD function, WORD operand)
 {
     switch (function) {
     case 0:
-        cursor_off();                   /* set cursor unvisible */
+        cursor_off();                   /* set cursor non-visible */
         break;
     case 1:
         cursor_on();                    /* set cursor visible */
@@ -904,6 +920,9 @@ WORD cursconf(WORD function, WORD operand)
  */
 void vt52_init(void)
 {
+    /* set font-related lineA variables */
+    font_set_default();
+
     /* Initial cursor settings */
     v_cur_cx = 0;                       /* cursor to column 0, row 0 */
     v_cur_cy = 0;

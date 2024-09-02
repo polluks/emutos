@@ -1,7 +1,7 @@
 /*
  * asm.h - Assembler help routines
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -42,6 +42,12 @@ extern void stop_until_interrupt(void);
 /* perform WORD multiply/divide with rounding */
 WORD mul_div_round(WORD mult1, WORD mult2, WORD divisor);
 
+/* protect d2/a2 when calling external user-supplied code */
+LONG protect_v(LONG (*func)(void));
+LONG protect_w(LONG (*func)(WORD), WORD);
+LONG protect_ww(LONG (*func)(void), WORD, WORD);
+LONG protect_wlwwwl(LONG (*func)(void), WORD, LONG, WORD, WORD, WORD, LONG);
+
 /*
  * Push/Pop registers from stack, with ColdFire support.
  * This is intended to be used inside inline assembly.
@@ -69,8 +75,16 @@ WORD mul_div_round(WORD mult1, WORD mult2, WORD divisor);
 #endif
 
 /*
- * WORD swpw(WORD val);
- *   swap endianess of val, 16 bits only.
+ * Important note for the macros below:
+ * Source: https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#InputOperands
+ * Do not modify the contents of input-only operands (except for inputs tied to
+ * outputs). The compiler assumes that on exit from the asm statement these
+ * operands contain the same values as they had before executing the statement.
+ */
+
+/*
+ * Pseudo-prototype for macro: void swpw(byref WORD val);
+ *   swap endianness of val, 16 bits only.
  */
 
 #ifdef __mcoldfire__
@@ -108,8 +122,8 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 }
 
 /*
- * WORD swpl(LONG val);
- *   swap endianess of val, 32 bits only.
+ * Pseudo-prototype for macro: void swpl(byref LONG val);
+ *   swap endianness of val, 32 bits only.
  *   e.g. ABCD => DCBA
  */
 
@@ -143,7 +157,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 
 
 /*
- * WORD swpw2(ULONG val);
+ * Pseudo-prototype for macro: void swpw2(byref ULONG val);
  *   swap endianness of val, treated as two 16-bit words.
  *   e.g. ABCD => BADC
  */
@@ -179,7 +193,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 
 
 /*
- * rolw1(WORD x);
+ * Pseudo-prototype for macro: void rolw1(byref WORD x);
  *  rotates x leftwards by 1 bit
  */
 #ifdef __mcoldfire__
@@ -196,7 +210,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 
 
 /*
- * rorw1(WORD x);
+ * Pseudo-prototype for macro: void rorw1(byref WORD x);
  *  rotates x rightwards by 1 bit
  */
 #ifdef __mcoldfire__
@@ -213,7 +227,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 
 
 /*
- * roll(ULONG x, WORD count);
+ * Pseudo-prototype for macro: void roll(byref ULONG x, WORD count);
  *  rotates x leftwards by count bits
  */
 #ifdef __mcoldfire__
@@ -230,7 +244,7 @@ static __inline__ void swpcopyw(const UWORD* src, UWORD* dest)
 
 
 /*
- * rorl(ULONG x, WORD count);
+ * Pseudo-prototype for macro: void rorl(byref ULONG x, WORD count);
  *  rotates x rightwards by count bits
  */
 #ifdef __mcoldfire__
@@ -306,7 +320,7 @@ __extension__                                      \
                     "jsr (%0)\n\t"                 \
                     "movem.l (sp),d0-d7/a0-a6\n\t" \
                     "lea     60(sp),sp"            \
-                    : : "a"(addr));  \
+                    : : "a"(addr): "memory");      \
 })
 #else
 #define regsafe_call(addr)                         \
@@ -314,7 +328,7 @@ __extension__                                      \
 ({__asm__ volatile ("movem.l d0-d7/a0-a6,-(sp)\n\t"\
                     "jsr (%0)\n\t"                 \
                     "movem.l (sp)+,d0-d7/a0-a6"    \
-                    : : "a"(addr));  \
+                    : : "a"(addr): "memory");      \
 })
 #endif
 
@@ -331,8 +345,8 @@ __extension__                                      \
     ("0:\n\t"                               \
      "subq.l #1,%0\n\t"                     \
      "jpl    0b"                            \
-    :                   /* outputs */       \
-    : "d"(_count)       /* inputs  */       \
+    : "=d"(_count)      /* outputs */       \
+    : "0"(_count)       /* inputs  */       \
     : "cc", "memory"    /* clobbered */     \
     );                                      \
   })

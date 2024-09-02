@@ -1,7 +1,7 @@
 /*
  * amiga.c - Amiga specific functions
  *
- * Copyright (C) 2013-2019 The EmuTOS development team
+ * Copyright (C) 2013-2022 The EmuTOS development team
  *
  * Authors:
  *  VRI   Vincent Rivière
@@ -315,7 +315,7 @@ static BOOL write_read_equals(void *start, ULONG testval)
     invalidate_data_cache(start, sizeof(ULONG)*2);
 
     /* Note for WinUAE: there is an issue with the JIT compiler.
-     * http://eab.abime.net/showthread.php?t=97234
+     * https://eab.abime.net/showthread.php?t=97234
      * Even when JIT is enabled in the WinUAE settings, it is disabled by
      * default. It is actually enabled when the instruction cache is enabled
      * through CACR, which happens very early in EmuTOS initialization.
@@ -957,7 +957,7 @@ static void amiga_mouse_vbl(void)
        || button1 != oldButton1
        || button2 != oldButton2))
     {
-        UBYTE packet[3];
+        SBYTE packet[3];
         packet[0] = 0xf8;
 
         if (button1)
@@ -1305,7 +1305,7 @@ static ULONG uaelib_ExitEmu(void)
 static char uae_debug_string[UAE_MAX_DEBUG_LENGTH + 1];
 
 /* The only available output function is uaelib_DbgPuts(),
- * so we have to buffer the string until until \n */
+ * so we have to buffer the string until \n */
 void kprintf_outc_uae(int c)
 {
     if (c == '\n')
@@ -1757,7 +1757,7 @@ static WORD amiga_floppy_read_raw_track(void)
 /*
  * Accurate documentation about CRC-CCITT can be found there:
  * https://jlgconsult.pagesperso-orange.fr/Atari/diskette/diskette_en.htm#FDC_CRC_Computation
- * http://www.atari-forum.com/viewtopic.php?p=9497#p9497
+ * https://www.atari-forum.com/viewtopic.php?p=9497#p9497
  */
 
 /* Precompute a CRC-CCITT table */
@@ -1804,7 +1804,7 @@ static UWORD get_crc_ccitt(const void *buffer, UWORD length)
  * Basically, first bit is a useless filler, second bit is the data bit.
  *
  * Documentation:
- * http://jlgconsult.pagesperso-orange.fr/Atari/diskette/diskette_en.htm#MFM_Address_Marks
+ * https://jlgconsult.pagesperso-orange.fr/Atari/diskette/diskette_en.htm#MFM_Address_Marks
  * https://en.wikipedia.org/wiki/Modified_Frequency_Modulation
  */
 static UBYTE decode_mfm(const UWORD **ppmfm)
@@ -2442,7 +2442,7 @@ static BOOL ReadExpansionRom(APTR board, struct ConfigDev *configDev)
         UBYTE subsizebits = configDev->cd_Rom.er_Flags & ERT_Z3_SSMASK;
         if (subsizebits < 2)
         {
-            // Nothing
+            /* Nothing */
             if (subsizebits == 1)
                 KDEBUG(("configDev=%p size=0x%08lx subsizebits=%u: Actual size will be probed later\n",
                     configDev, size, subsizebits));
@@ -2835,7 +2835,7 @@ void amiga_autoconfig(void)
         AddConfigDev(configDev);
     }
 
-    /* Intialize internal drivers for detected boards */
+    /* Initialize internal drivers for detected boards */
     init_expansion_drivers();
 
     KDEBUG(("**************** AUTOCONFIG DONE ****************\n"));

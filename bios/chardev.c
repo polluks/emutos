@@ -1,7 +1,7 @@
 /*
  *  chardev.c - BIOS character device functions
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2021 The EmuTOS development team
  *
  * Authors:
  *  THH     Thomas Huth
@@ -18,7 +18,6 @@
 #include "chardev.h"
 #include "conout.h"
 #include "vt52.h"
-#include "mfp.h"
 #include "bios.h"
 #include "asm.h"
 #include "serport.h"
@@ -102,7 +101,7 @@ LONG bconout5(WORD dev, WORD ch)
     /* The terminal will interpret the control characters, anyway */
     bconout(1, ch);
 #endif
-    ascii_out(ch);
+    ascii_out(LOBYTE(ch));
     return 1L;
 }
 

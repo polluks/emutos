@@ -2,7 +2,7 @@
  * vdi_defs.h - Definitions for virtual workstations
  *
  * Copyright 1999 by Caldera, Inc.
- * Copyright 2005-2019 The EmuTOS development team.
+ * Copyright 2005-2022 The EmuTOS development team.
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -15,7 +15,29 @@
 #include "aesext.h"
 #include "vdiext.h"
 
-#define HAVE_BEZIER 0           /* switch on bezier capability */
+#define HAVE_BEZIER 0           /* switch on bezier capability - entirely untested */
+
+#define EXTENDED_PALETTE (CONF_WITH_VIDEL || CONF_WITH_TT_SHIFTER)
+
+#define TRUECOLOR_MODE  (v_planes > 8)
+
+
+#if CONF_WITH_VIDEL
+# define UDPAT_PLANES   32      /* actually 16, but each plane occupies 2 WORDs */
+#elif CONF_WITH_TT_SHIFTER
+# define UDPAT_PLANES   8
+#else
+# define UDPAT_PLANES   4
+#endif
+
+/*
+ * some VDI opcodes
+ */
+#define V_OPNWK_OP      1
+#define V_CLSWK_OP      2
+#define V_OPNVWK_OP     100
+#define V_CLSVWK_OP     101
+
 
 /*
  * some minima and maxima
@@ -92,7 +114,7 @@
 #define SUBROUTINE  5
 #define VDI_HANDLE  6
 
-/* text style bits: for vwk->style (and also lineA variable STYLE) */
+/* text style bits: for vwk->style (and also line-A variable STYLE) */
 #define F_THICKEN   1
 #define F_LIGHT     2
 #define F_SKEW      4
@@ -127,6 +149,14 @@ typedef struct {
 
 #define VDI_CLIP(wvk) ((VwkClip*)(&(wvk->xmn_clip)))
 
+
+#if CONF_WITH_VDI_16BIT
+/* virtual workstation extension, used for VDI Trucolor (16-bit) support */
+typedef struct {
+    UWORD palette[256];         /* pseudo-palette with pixel value RRRRRGGGGG0BBBBB */
+    WORD req_col[256][3];       /* requested colour */
+} VwkExt;
+#endif
 
 /* Structure to hold data for a virtual workstation */
 
@@ -173,7 +203,7 @@ struct Vwk_ {
     Fonthead scratch_head;      /* Holder for the doubled font data */
     WORD text_color;            /* Current text color (PEL value)   */
     WORD ud_ls;                 /* User defined linestyle       */
-    WORD ud_patrn[4 * 16];      /* User defined pattern         */
+    WORD ud_patrn[UDPAT_PLANES*16]; /* User defined pattern             */
     WORD v_align;               /* Current text vertical alignment  */
     WORD wrt_mode;              /* Current writing mode         */
     WORD xfm_mode;              /* Transformation mode requested (NDC) */
@@ -181,8 +211,13 @@ struct Vwk_ {
     WORD xmx_clip;              /* High x point of clipping rectangle   */
     WORD ymn_clip;              /* Low y point of clipping rectangle    */
     WORD ymx_clip;              /* High y point of clipping rectangle   */
+#if CONF_WITH_VDI_16BIT
+    VwkExt *ext;                /* 16 bit colour management */
+#endif
     /* newly added */
+#if HAVE_BEZIER
     WORD bez_qual;              /* actual quality for bezier curves */
+#endif
 };
 
 /*
@@ -203,6 +238,17 @@ typedef struct {
     WORD x1,y1;
     WORD x2,y2;
 } Line;
+
+
+/*
+ * the following line-A variables contain the VDI color palette entries.
+ * REQ_COL contains the first 16 entries; req_col2 contains entries
+ * 16-255 (only applicable for 8-plane resolutions).  Note that the
+ * location of req_col2 is not documented by Atari, but is derived from
+ * disassembly of TOS ROMs, and source code for MagiC's VDI.
+ */
+extern WORD REQ_COL[16][3];     /* defined in lineavars.S */
+extern WORD req_col2[240][3];   /* defined in lineavars.S */
 
 
 /* External definitions for internal use */
@@ -244,7 +290,7 @@ extern WORD HIDE_CNT;           /* Number of levels the mouse is hidden */
 extern WORD     newx;           /* new mouse x&y position */
 extern WORD     newy;           /* new mouse x&y position */
 extern UBYTE    draw_flag;      /* non-zero means draw mouse form on vblank */
-extern UBYTE    mouse_flag;     /* non-zero, if mouse ints disabled */
+extern UBYTE    mouse_flag;     /* non-zero while mouse cursor is being modified */
 extern UBYTE    cur_ms_stat;    /* current mouse status */
 
 
@@ -260,6 +306,7 @@ void set_LN_MASK(Vwk *vwk);
 void st_fl_ptr(Vwk *);
 void gdp_justified(Vwk *);
 WORD validate_color_index(WORD colnum);
+void set_color16(Vwk *vwk, WORD colnum, WORD *rgb);
 
 /* drawing primitives */
 void draw_pline(Vwk *vwk);
@@ -272,7 +319,7 @@ void wideline(Vwk *vwk, Point *point, int count);
 /* common drawing function */
 void Vwk2Attrib(const Vwk *vwk, VwkAttrib *attr, const UWORD color);
 void draw_rect_common(const VwkAttrib *attr, const Rect *rect);
-void clc_flit (const VwkAttrib *attr, const VwkClip *clipper, const Point *point, WORD y, int vectors);
+void clc_flit(const VwkAttrib *attr, const VwkClip *clipper, const Point *point, WORD vectors, WORD start, WORD end);
 void abline (const Line *line, const WORD wrt_mode, UWORD color);
 void contourfill(const VwkAttrib *attr, const VwkClip *clip);
 
@@ -384,10 +431,12 @@ void vdi_vex_wheelv(Vwk *);         /* 134 */
 void direct_screen_blit(WORD count, WORD *str);
 #endif
 
+#if HAVE_BEZIER
 /* not in original TOS */
 void v_bez_qual(Vwk *);
 void v_bez_control(Vwk *);
 void v_bez(Vwk *vwk, Point *points, int count);
 void v_bez_fill(Vwk *vwk, Point *points, int count);
+#endif
 
 #endif                          /* VDIDEF_H */

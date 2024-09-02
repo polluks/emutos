@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2019 The EmuTOS development team
+*                 2002-2022 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -26,10 +26,12 @@
 #include "gemdos.h"
 #include "rectfunc.h"
 #include "optimize.h"
+#include "miscutil.h"
 #include "biosbind.h"
 #include "biosdefs.h"
 #include "xbiosbind.h"
 #include "gemerror.h"
+#include "cookie.h"
 
 #include "aesdefs.h"
 #include "deskbind.h"
@@ -51,8 +53,11 @@
 #include "nls.h"
 #include "scancode.h"
 #include "biosext.h"
-#include "lineavars.h"      /* for MOUSE_BT */
+#include "lineavars.h"      /* for MOUSE_BT, V_REZ_HZ */
 
+/* Needed to force media change */
+#define MEDIACHANGE     0x02
+#define READSEC         0x00
 
 #if CONF_WITH_FORMAT
 /*
@@ -124,8 +129,8 @@ void desk_clear(WORD wh)
 
     /*
      * if 'root' is still DROOT, then either the 'window' is the desktop
-     * (wh==0), or something is wrong with the window setup.  to handle
-     * the latter case, we force the handle to 0 anyway for safety.
+     * (wh==DESKWH), or something is wrong with the window setup.  to handle
+     * the latter case, we force the handle to the desktop anyway for safety.
      */
     if (root == DROOT)
         wh = DESKWH;
@@ -167,7 +172,7 @@ void desk_verify(WORD wh, WORD changed)
     WNODE *pw;
     GRECT clip;
 
-    if (wh)
+    if (wh != DESKWH)
     {
         /* get current size */
         pw = win_find(wh);
@@ -176,7 +181,7 @@ void desk_verify(WORD wh, WORD changed)
             if (changed)
             {
                 wind_get_grect(wh, WF_WXYWH, &clip);
-                win_bldview(pw, clip.g_x, clip.g_y, clip.g_w, clip.g_h);
+                win_bldview(pw, &clip);
             }
             G.g_croot = pw->w_root;
         }
@@ -201,9 +206,12 @@ void do_wredraw(WORD w_handle, GRECT *gptr)
     if (w_handle != DESKWH)
     {
         pw = win_find(w_handle);
-        if (pw)
-            root = pw->w_root;
+        if (!pw)        /* window (no longer) exists */
+            return;
+        root = pw->w_root;
     }
+
+    G.g_idt = Supexec((LONG)get_idt_cookie);    /* current _IDT for format_fnode() */
 
     graf_mouse(M_OFF, NULL);
 
@@ -241,22 +249,32 @@ static ICONBLK *get_iconblk_ptr(OBJECT olist[], WORD obj)
 }
 
 
+/*
+ * fix up the (x,y) positioning of a desktop window:
+ *  . it should be horizontally aligned on a 16-pixel boundary
+ *  . it must be below the menu bar
+ */
 void do_xyfix(WORD *px, WORD *py)
 {
-    *px = (*px + 8) & 0xfff0;   /* horizontally align to nearest word boundary */
-    if (*py < G.g_ydesk)        /* ensure it's below menu bar */
-        *py = G.g_ydesk;
+    *px = (*px + 8) & 0xfff0;   /* horizontally align to nearest 16-pixel boundary */
+#if CONF_WITH_3D_OBJECTS
+    /* ensure that we can still access the mover */
+    if (*px + gl_wbox + 2*ADJ3DSTD >= V_REZ_HZ)
+        *px -= 16;
+#endif
+    if (*py < G.g_desk.g_y)     /* ensure it's below menu bar */
+        *py = G.g_desk.g_y;
 }
 
 
 /*
  * open a window, normally corresponding to a disk drive icon on the desktop
  *
- * if curr == 0, there is no 'source' screen object from which the new
+ * if curr <= 0, there is no 'source' screen object from which the new
  * object is coming, so we do not do the zoom effect & we do not try to
  * reset the object state.
  *
- * if curr != 0, there *is* a source object: we always do the zoom effect,
+ * if curr > 0, there *is* a source object: we always do the zoom effect,
  * and change the object state, but we only redraw the object when we are
  * opening a new window.  otherwise, we must be showing the new data in
  * an existing window: the FNODE for the 'source' object has already been
@@ -268,11 +286,14 @@ void do_xyfix(WORD *px, WORD *py)
  * if we did allow a redraw, at best the display would show the wrong
  * values (or garbage) briefly; at worst, the desktop would crash.
  */
-void do_wopen(WORD new_win, WORD wh, WORD curr, WORD x, WORD y, WORD w, WORD h)
+void do_wopen(WORD new_win, WORD wh, WORD curr, GRECT *pt)
 {
+    GRECT t;
     GRECT c, d;
 
-    do_xyfix(&x, &y);
+    t = *pt;
+
+    do_xyfix(&t.g_x, &t.g_y);
 
     if (curr > 0)
     {
@@ -286,12 +307,12 @@ void do_wopen(WORD new_win, WORD wh, WORD curr, WORD x, WORD y, WORD w, WORD h)
         d.g_x += c.g_x;     /* convert window to screen coordinates */
         d.g_y += c.g_y;
 
-        graf_growbox(d.g_x, d.g_y, d.g_w, d.g_h, x, y, w, h);
+        graf_growbox_grect(&d, &t);
         act_chg(G.g_cwin, G.g_croot, curr, &gl_rfull, FALSE, new_win?TRUE:FALSE);
     }
 
     if (new_win)
-        wind_open(wh, x, y, w, h);
+        wind_open_grect(wh, &t);
 
     G.g_wlastsel = wh;
 }
@@ -311,13 +332,11 @@ void do_wfull(WORD wh)
     if (rc_equal(&curr, &full)) /* currently full, so shrink */
     {
         wind_set_grect(wh, WF_CXYWH, &prev);
-        graf_shrinkbox(prev.g_x, prev.g_y, prev.g_w, prev.g_h,
-                        full.g_x, full.g_y, full.g_w, full.g_h);
+        graf_shrinkbox_grect(&prev, &full);
         return;
     }
 
-    graf_growbox(curr.g_x, curr.g_y, curr.g_w, curr.g_h,
-                full.g_x, full.g_y, full.g_w, full.g_h);
+    graf_growbox_grect(&curr, &full);
     wind_set_grect(wh, WF_CXYWH, &full);
 }
 
@@ -383,7 +402,7 @@ void remove_locate_shortcut(WORD curr)
             strcpy(p, fname);
         else
             *(p-1) = '\0';
-        scan_str(path,&pa->a_pdata);
+        scan_str(path, &pa->a_pappl);
     }
 }
 #endif
@@ -427,8 +446,7 @@ WORD do_diropen(WNODE *pw, WORD new_win, WORD curr_icon,
     wind_set(pw->w_id, WF_NAME, pw->w_name, 0, 0);
 
     /* do actual wind_open  */
-    do_wopen(new_win, pw->w_id, curr_icon,
-                pt->g_x, pt->g_y, pt->g_w, pt->g_h);
+    do_wopen(new_win, pw->w_id, curr_icon, pt);
     if (new_win)
         win_top(pw);
 
@@ -757,8 +775,8 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
 
     handle = (WORD)rc;
 
-    scr_width = G.g_wdesk;
-    scr_height = G.g_ydesk + G.g_hdesk;
+    scr_width = G.g_desk.g_w;
+    scr_height = G.g_desk.g_y + G.g_desk.g_h;
 
     /*
      * set up for text output
@@ -769,7 +787,7 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
     form_dial(FMD_START, 0,0,0,0, 0,0,scr_width,scr_height);
     clear_screen();
 
-    pagesize = (G.g_ydesk+G.g_hdesk)/gl_hchar - 1;
+    pagesize = (G.g_desk.g_y+G.g_desk.g_h)/gl_hchar - 1;
     linecount = 0L;
 
     while(1)
@@ -814,15 +832,13 @@ static void show_file(char *name,LONG bufsize,char *iobuf)
  *
  *  returns TRUE iff shel_write() was issued successfully
  */
-WORD do_aopen(ANODE *pa, WORD isapp, WORD curr, char *pathname, char *pname, char *tail)
+WORD do_aopen(ANODE *pa, BOOL isapp, WORD curr, char *pathname, char *pname, char *tail)
 {
     WNODE *pw;
-    WORD ret, done;
+    WORD ret;
     WORD isgraf, isparm, installed_datafile;
-    char *pcmd, *ptail, *p;
+    char *ptail, *p;
     char app_path[MAXPATHLEN];
-
-    done = FALSE;
 
 #if CONF_WITH_DESKTOP_SHORTCUTS
     /*
@@ -840,9 +856,9 @@ WORD do_aopen(ANODE *pa, WORD isapp, WORD curr, char *pathname, char *pname, cha
         if (!file_exists(pathname, pname))
         {
             remove_locate_shortcut(curr);
-            return done;
+            return FALSE;
         }
-        tmp = app_afind_by_name(AT_ISFILE, AF_ISDESK|AF_WINDOW, pathname, pname, &isapp);
+        tmp = app_afind_by_name(AT_ISFILE, AF_ISDESK|AF_WINDOW|AF_VIEWER, pathname, pname, &isapp);
         if (tmp)
             pa = tmp;
     }
@@ -890,22 +906,31 @@ WORD do_aopen(ANODE *pa, WORD isapp, WORD curr, char *pathname, char *pname, cha
         return FALSE;
     }
 
-    /*
-     * see if application was selected directly or a
-     * data file with an associated primary application
-     */
     G.g_work[1] = '\0';
     ptail = G.g_work + 1;   /* arguments go here */
-    ret = TRUE;
 
+    /*
+     * see if application was selected directly or via a
+     * data file with an associated primary application
+     */
     if (installed_datafile)
     {
         /*
          * the user has selected a file with an extension that matches
-         * an installed application.  we set up to open the application,
-         * with a command tail based on the application flags.
+         * an installed application.
+         *
+         * first check that the application exists, since it may be being
+         * invoked by an outdated entry for an installed application.
          */
-        pcmd = pa->a_pappl;
+        if (!file_exists(pa->a_pappl, NULL))
+        {
+            fun_alert_merge(1, STFILENF, filename_start(pa->a_pappl));
+            return FALSE;
+        }
+        /*
+         * set up to open the application, with a command tail based on
+         * the application flags.
+         */
         strcpy(ptail,pa->a_pargs);
         p = ptail + strlen(ptail);
 
@@ -915,95 +940,86 @@ WORD do_aopen(ANODE *pa, WORD isapp, WORD curr, char *pathname, char *pname, cha
             p = filename_start(p);
         }
         strcpy(p,pname);        /* the filename always goes on the end */
+        return pro_run(isgraf, pa->a_pappl, G.g_work, G.g_cwin, curr);
     }
-    else
+
+    /*
+     * the file was selected directly, perhaps by dropping another file
+     * on to it.  first, build full pathname for pro_run() or show_file()
+     */
+    strcpy(app_path, pathname);
+    p = filename_start(app_path);
+    strcpy(p, pname);
+
+    /*
+     * if the selected file is an application, run it
+     */
+    if (isapp)
     {
-        /* build full pathname for pro_run() or show_file() */
-        strcpy(app_path, pathname);
-        p = filename_start(app_path);
-        strcpy(p, pname);
-        if (isapp)
-        {
+        ret = TRUE;
 #if CONF_WITH_DESKTOP_SHORTCUTS
-            if (tail)
-            {
-                /*
-                 * the user has dropped a file on to an application,
-                 * so we already know the tail to pass
-                 */
-                strcpy(ptail, tail);
-            } else
-#endif
-            if (isparm)
-            {
-                /*
-                 * the user has selected a .TTP or .GTP application,
-                 * so we need to prompt for the parameters to pass
-                 */
-                ret = opn_appl(pname, ptail);
-            }
-            pcmd = app_path;
-        }
-        else
+        if (tail)
         {
             /*
-             * the user has selected a file with an extension which
-             * does not match any installed application
+             * the user has dropped a file on to an application,
+             * so we already know the tail to pass
              */
-#if CONF_WITH_SHOW_FILE
-            ret = fun_alert(1, STSHOW);
-            if (ret != 3)   /* user said "Show" or "Print" */
-            {
-                char *iobuf = dos_alloc_anyram(IOBUFSIZE);
-                if (iobuf)
-                {
-                    if (ret == 1)
-                        show_file(app_path, IOBUFSIZE, iobuf);
-                    else
-                        print_file(app_path, IOBUFSIZE, iobuf);
-                    dos_free(iobuf);
-                }
-                else
-                    malloc_fail_alert();
-            }
-#else
-            fun_alert(1, STNOAPPL);
+            strcpy(ptail, tail);
+        } else
 #endif
-            ret = FALSE;    /* don't run any application */
-        }
-    }
-
-    if (ret)
-    {
-        /*
-         * the user wants to run an application: we first check that
-         * it exists, since it may be being invoked by an outdated
-         * entry for an installed application.
-         */
-        if (!file_exists(pcmd, NULL))
+        if (isparm)
         {
-            fun_alert_merge(1, STFILENF, filename_start(pcmd));
-            return FALSE;
+            /*
+             * the user has selected a .TTP or .GTP application,
+             * so we need to prompt for the parameters to pass
+             */
+            ret = opn_appl(pname, ptail);
         }
-        /* G.g_work+1 is already set up */
-        done = pro_run(isgraf, pcmd, G.g_work, G.g_cwin, curr);
+        return ret ? pro_run(isgraf, app_path, G.g_work, G.g_cwin, curr) : FALSE;
     }
 
-    return done;
-}
+    /*
+     * the user has selected a file which is not an application and
+     * which does not have an extension that matches a 'normal' installed
+     * application. if configured, we run the default viewer (if present).
+     */
+#if CONF_WITH_VIEWER_SUPPORT
+    pa = app_afind_viewer();
+    if (pa)
+    {
+        strcpy(ptail, app_path);
+        KDEBUG(("Running default viewer %s: isgraf=%d, tail=%s\n",
+                pa->a_pappl,pa->a_flags&AF_ISCRYS,ptail));
+        return pro_run(pa->a_flags&AF_ISCRYS, pa->a_pappl, G.g_work, G.g_cwin, curr);
+    }
+#endif
 
+    /*
+     * the user has selected a file which is not an application and
+     * which does not have an extension that matches any installed
+     * application. if configured, we prompt for Show or Print.
+     */
+#if CONF_WITH_SHOW_FILE
+    ret = fun_alert(1, STSHOW);
+    if (ret != 3)   /* user said "Show" or "Print" */
+    {
+        char *iobuf = dos_alloc_anyram(IOBUFSIZE);
+        if (iobuf)
+        {
+            if (ret == 1)
+                show_file(app_path, IOBUFSIZE, iobuf);
+            else
+                print_file(app_path, IOBUFSIZE, iobuf);
+            dos_free(iobuf);
+        }
+        else
+            malloc_fail_alert();
+    }
+#else
+    fun_alert(1, STNOAPPL);
+#endif
 
-/*
- *  Build root path for specified drive
- */
-void build_root_path(char *path,WORD drive)
-{
-    char *p = path;
-
-    *p++ = drive;
-    *p++= ':';
-    *p++ = '\\';
-    *p = '\0';
+    return FALSE;
 }
 
 
@@ -1039,7 +1055,7 @@ WORD do_dopen(WORD curr)
     if (pw)
     {
         build_root_path(path,drv);
-        strcpy(path+3,"*.*");
+        set_all_files(path+3);
         if (!do_diropen(pw, TRUE, curr, path, (GRECT *)&G.g_screen[pw->w_root].ob_x, TRUE))
         {
             win_free(pw);
@@ -1098,7 +1114,7 @@ void do_fopen(WNODE *pw, WORD curr, char *pathname, WORD allow_new_win)
             remove_locate_shortcut(curr);
             return;
         }
-        strcpy(p,"*.*");
+        set_all_files(p);
         new_win = TRUE;
     }
     else
@@ -1106,12 +1122,12 @@ void do_fopen(WNODE *pw, WORD curr, char *pathname, WORD allow_new_win)
     if (allow_new_win)
     {
         graf_mkstate(&junk, &junk, &junk, &keystate);
-        if (keystate & MODE_ALT)
+        if ((keystate & MODE_SCA) == MODE_ALT)
             new_win = TRUE;
     }
 
     /*
-     * if we are opening a folder on the desktop, or holding down the Alt
+     * if we are opening a folder on the desktop, or holding down only the Alt
      * key when opening a folder in a window, we need to create a new window
      */
     if (new_win)
@@ -1164,16 +1180,32 @@ static void printer_alert(ANODE *pa)
 /*
  *  Open an icon
  */
-WORD do_open(WORD curr)
+WORD do_open(WNODE *pwin, WORD curr)
 {
     ANODE *pa;
     WNODE *pw;
     FNODE *pf;
-    WORD isapp;
+    BOOL isapp;
     char pathname[MAXPATHLEN];
     char filename[LEN_ZFNAME];
 
-    pa = i_find(G.g_cwin, curr, &pf, &isapp);
+    /*
+     * if the icon is on the desktop, we get the ANODE from the item#;
+     * otherwise, we must go via the filenodes, because the icon may
+     * not be currently visible
+     */
+    if (G.g_cwin == DESKWH)
+    {
+        pa = i_find(DESKWH, curr, &pf, &isapp);
+    }
+    else
+    {
+        pf = pn_selected(pwin); /* get first selected file */
+        if (!pf)
+            return FALSE;
+        pa = pf->f_pa;
+        isapp = pf->f_isap;
+    }
     if (!pa)
         return FALSE;
 
@@ -1188,16 +1220,16 @@ WORD do_open(WORD curr)
 #if CONF_WITH_DESKTOP_SHORTCUTS
         if (pa->a_flags & AF_ISDESK)
         {
-            char *p = filename_start(pa->a_pdata);
+            char *p = filename_start(pa->a_pappl);
             /* check for root folder */
-            if ((pa->a_type == AT_ISFOLD) && (p == pa->a_pdata))
+            if ((pa->a_type == AT_ISFOLD) && (p == pa->a_pappl))
             {
-                strcpy(pathname, pa->a_pdata);
+                strcpy(pathname, pa->a_pappl);
                 filename[0] = '\0';
             }
             else
             {
-                strlcpy(pathname, pa->a_pdata, p - pa->a_pdata);
+                strlcpy(pathname, pa->a_pappl, p-pa->a_pappl);
                 strcpy(filename, p);
             }
             strcat(pathname, "\\*.*");
@@ -1273,7 +1305,7 @@ WORD do_info(WORD curr)
             {
                 DTA *dta;
 
-                dta = file_exists(pa->a_pdata, NULL);
+                dta = file_exists(pa->a_pappl, NULL);
                 if (!dta)
                 {
                     remove_locate_shortcut(curr);
@@ -1282,8 +1314,8 @@ WORD do_info(WORD curr)
 
                 pf = &fn;
                 memcpy(&pf->f_attr, &dta->d_attrib, 23);
-                strcpy(pathname, pa->a_pdata);
-                strcpy(filename_start(pathname),"*.*");
+                strcpy(pathname, pa->a_pappl);
+                del_fname(pathname);
                 pathptr = pathname;
             }
             else
@@ -1473,6 +1505,43 @@ static WORD format_floppy(OBJECT *tree, WORD max_width, WORD incr)
 }
 
 /*
+ *  Determine the default drive for the floppy format dialog
+ *
+ *  (1) if there is a selected drive icon, and the drive exists,
+ *      return that drive
+ *  (2) else, if a drive exists return that drive (preferring A:)
+ *  (3) otherwise return -1 (no floppy drives)
+ */
+static WORD determine_default_drive(OBJECT *tree)
+{
+    OBJECT *obj;
+    WORD i, objnum;
+
+    for (i = 0; i < 2; i++)
+    {
+        objnum = obj_get_obid('A'+i);
+        if (!objnum)        /* no such icon */
+            continue;
+
+        if (G.g_screen[objnum].ob_state & SELECTED)
+        {
+            obj = &tree[FMT_DRVA+i];
+            if (!(obj->ob_state & DISABLED))
+                return i;
+        }
+    }
+
+    for (i = 0; i < 2; i++)
+    {
+        obj = &tree[FMT_DRVA+i];
+        if (!(obj->ob_state & DISABLED))
+            return i;
+    }
+
+    return -1;
+}
+
+/*
  *  Format a floppy disk
  */
 void do_format(void)
@@ -1482,6 +1551,7 @@ void do_format(void)
     WORD i, drivebits, drive;
     WORD exitobj, rc;
     WORD max_width, incr;
+    BOOL done = FALSE;
 
     tree = desk_rs_trees[ADFORMAT];
 
@@ -1497,46 +1567,29 @@ void do_format(void)
         }
         else
         {
-            obj->ob_state &= ~SELECTED;
             obj->ob_state |= DISABLED;
         }
+        obj->ob_state &= ~SELECTED;     /* always deselect buttons */
     }
 
     /*
-     * if a drive is currently selected, don't change it
+     * determine default drive to select in dialog
      */
-    drive = -1;
-    for (i = 0, obj = &tree[FMT_DRVA]; i < 2; i++, obj++)
+    drive = determine_default_drive(tree);
+
+    /*
+     * if we've found a drive, select the corresponding button
+     * otherwise there are no enabled drives, so disallow OK
+     */
+    if (drive >= 0)
     {
-        if (obj->ob_state & SELECTED)
-        {
-            drive = i;
-            break;
-        }
+        obj = &tree[FMT_DRVA+drive];
+        obj->ob_state |= SELECTED;
     }
-
-    /*
-     * if NO drive was previously selected, select the first enabled one
-     */
-    if (drive < 0)
+    else
     {
-        for (i = 0, obj = &tree[FMT_DRVA]; i < 2; i++, obj++)
-        {
-            if (!(obj->ob_state & DISABLED))
-            {
-                drive = i;
-                break;
-            }
-        }
-        if (drive >= 0)
-            obj->ob_state |= SELECTED;
-    }
-
-    /*
-     * if there are no enabled drives, disallow OK
-     */
-    if (drive < 0)
         tree[FMT_OK].ob_state |= DISABLED;
+    }
 
     tree[FMT_CNCL].ob_state &= ~SELECTED;
 
@@ -1544,7 +1597,7 @@ void do_format(void)
      * adjust the initial default formatting option, hiding
      * the high density option if not available
      */
-    if ((cookie_fdc>>24) == 0)
+    if (Supexec((LONG)get_floppy_type) == 0)
     {
         if (tree[FMT_HD].ob_state & SELECTED)   /* first time */
         {
@@ -1572,7 +1625,10 @@ void do_format(void)
         if (exitobj == FMT_OK)
             rc = format_floppy(tree, max_width, incr);
         else
+        {
             rc = -1;
+            done = TRUE;
+        }
         end_dialog(tree);
 
         if (rc == 0)
@@ -1581,12 +1637,14 @@ void do_format(void)
             refresh_drive('A'+drive);           /* update relevant windows */
             dos_space(drive + 1, &total, &avail);
             if (fun_alert_merge(2, STFMTINF, avail) == 2)
-                rc = -1;
+                done = TRUE;
         }
         tree[FMT_BAR].ob_width = max_width;     /* reset to starting values */
         tree[FMT_BAR].ob_spec = 0x00FF1101L;
         tree[FMT_OK].ob_state &= ~SELECTED;
-    } while (rc == 0);
+    } while (!done);
+
+    desk_clear(DESKWH);
 }
 #endif
 
@@ -1595,10 +1653,26 @@ void do_format(void)
  *  Routine to re-read and redisplay the directory associated with
  *  the specified window
  */
-void refresh_window(WNODE *pw)
+void refresh_window(WNODE *pw, BOOL force_mediach)
 {
+    char drive;
+
     if (!pw->w_id)      /* desktop */
         return;
+
+    /*
+     * For floppy drives, allow a forced media change by a call
+     * to Rwabs() with buffer == NULL.
+     */
+    if (force_mediach)
+    {
+        drive = pw->w_pnode.p_spec[0];
+        if (drive == 'A' || drive == 'B')
+        {
+            KDEBUG(("Forcing media change for drive %c\n", drive));
+            Rwabs(READSEC, (LONG)NULL, MEDIACHANGE, 0, drive - 'A', 0);
+        }
+    }
 
     /* make sure we don't open a new window */
     do_fopen(pw, 0, pw->w_pnode.p_spec, FALSE);
@@ -1620,7 +1694,7 @@ void refresh_drive(WORD drive)
             if (pw->w_pnode.p_spec[0] == drive)
             {
                 fun_close(pw, CLOSE_TO_ROOT);   /* what Atari TOS does */
-                refresh_window(pw);
+                refresh_window(pw, FALSE);
             }
         }
     }
@@ -1630,6 +1704,10 @@ void refresh_drive(WORD drive)
 /*
  *  Given an icon index, go find the ANODE which it represents
  *
+ *  NOTE: normally, the anode for the default viewer is not included
+ *  in the search.  The caller of this function may request its inclusion
+ *  by negating the value of the window handle that is passed.
+ *
  *  . returns ptr to corresponding FNODE via arg3
  *  . if checking a window (arg1 != 0), then return an indicator via arg4:
  *      TRUE if the matching ANODE indicates the item is an application,
@@ -1638,18 +1716,18 @@ void refresh_drive(WORD drive)
  *
  *  returns NULL if no matching index
  */
-ANODE *i_find(WORD wh, WORD item, FNODE **ppf, WORD *pisapp)
+ANODE *i_find(WORD wh, WORD item, FNODE **ppf, BOOL *pisapp)
 {
     ANODE *pa;
     WNODE *pw;
     FNODE *pf;
-    WORD isapp;
+    BOOL isapp;
 
     pa = (ANODE *) NULL;
     pf = (FNODE *) NULL;
     isapp = FALSE;
 
-    if (!wh)        /* On desktop? */
+    if (wh == DESKWH)       /* On desktop? */
     {
         pa = app_afind_by_id(item);
         if (pa)
@@ -1658,14 +1736,22 @@ ANODE *i_find(WORD wh, WORD item, FNODE **ppf, WORD *pisapp)
     }
     else
     {
+        WORD ignore = AF_ISDESK|AF_WINDOW|AF_VIEWER;
+        if (wh < 0)
+        {
+            wh = -wh;
+            ignore &= ~AF_VIEWER;   /* include default viewer anode */
+        }
         pw = win_find(wh);
         if (pw)
         {
             if (item >= 0)
                 pf = G.g_screeninfo[item].fnptr;
             if (pf)
+            {
                 pa = app_afind_by_name((pf->f_attr&FA_SUBDIR)?AT_ISFOLD:AT_ISFILE,
-                            AF_ISDESK|AF_WINDOW, pw->w_pnode.p_spec, pf->f_name, &isapp);
+                                        ignore, pw->w_pnode.p_spec, pf->f_name, &isapp);
+            }
         }
     }
 
@@ -1684,9 +1770,20 @@ ANODE *i_find(WORD wh, WORD item, FNODE **ppf, WORD *pisapp)
  */
 WORD set_default_path(char *path)
 {
-    dos_sdrv(path[0]-'A');
+    WORD rc;
 
-    return (WORD)dos_chdir(path);
+    /*
+     * show we're busy, because this can involve disk i/o
+     * (for example, if the media has changed)
+     */
+    desk_busy_on();
+
+    dos_sdrv(path[0]-'A');
+    rc = (WORD)dos_chdir(path);
+
+    desk_busy_off();
+
+    return rc;
 }
 
 

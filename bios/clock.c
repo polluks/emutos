@@ -1,7 +1,7 @@
 /*
  * clock.c - BIOS time and date routines
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  MAD   Martin Doering
@@ -31,9 +31,10 @@
 #include "delay.h"
 #include "bios.h"
 #include "../bdos/bdosstub.h"
-#ifdef MACHINE_AMIGA
 #include "amiga.h"
-#endif
+#include "lisa.h"
+#include "disk.h"
+#include "acsi.h"
 
 #if (CONF_WITH_MONSTER || CONF_WITH_IKBD_CLOCK)
 static UBYTE int2bcd(UWORD a)
@@ -47,7 +48,7 @@ static UWORD bcd2int(UBYTE a)
 }
 #endif
 
-#if (CONF_WITH_ICDRTC || CONF_WITH_MONSTER || CONF_WITH_MEGARTC || CONF_WITH_NVRAM || CONF_WITH_IKBD_CLOCK)
+#if (CONF_WITH_ICDRTC || CONF_WITH_MONSTER || CONF_WITH_MEGARTC || CONF_WITH_NVRAM || CONF_WITH_IKBD_CLOCK || CONF_WITH_ULTRASATAN_CLOCK)
 /*
  * structures used by extract_date(), extract_time()
  */
@@ -513,12 +514,15 @@ void detect_monster_rtc(void)
     /*
      * Check if there's a DS1307-compatible RTC connected.
      * If there isn't, any attempts to read from it will
-     * return all zeros. So we try to read the DAY register.
-     * If it's zero, there's either no RTC or it's not
+     * return either all zeros or all ones depending on the
+     * exact HW setup. So we try to read the DAY register.
+     * If it's 0 or 0xff, there's either no RTC or it's not
      * initialized. So we try to write to the DAY register
-     * and read back it's value. If still zero, then no
-     * RTC is present.
+     * and read back its value. If it is still 0 or 0xff,
+     * then no RTC is present.
      */
+
+    UBYTE dayreg;
 
     /* Initialize I2C delay. */
     delay5us = loopcount_1_msec / 200;
@@ -526,11 +530,13 @@ void detect_monster_rtc(void)
     /* Detect presence of RTC. */
     has_monster_rtc = TRUE;
 
-    if (read_ds1307(4) == 0)
+    dayreg = read_ds1307(4);
+    if ((dayreg == 0) || (dayreg == 0xff))
     {
         write_ds1307(4, 1);
 
-        if (read_ds1307(4) == 0)
+        dayreg = read_ds1307(4);
+        if ((dayreg == 0) || (dayreg == 0xff))
             has_monster_rtc = FALSE;
         else
             /* RTC present, but not initialized. */
@@ -817,6 +823,8 @@ static void msetdt(ULONG dt)
     msetregs(&clkregs);
 }
 
+#undef clk
+
 #endif /* CONF_WITH_MEGARTC */
 
 #if CONF_WITH_NVRAM
@@ -827,11 +835,9 @@ static void msetdt(ULONG dt)
  * The MC146818 was used as the RTC and NVRAM in TT and Falcon.
  * You can find a header file in /usr/src/linux/include/linux/mc146818rtc.h
  * Proper implementation of RTC functions is in linux/arch/m68k/atari/time.c.
- * The code below is just my quick hack. It works but it could not be used
- * for updating real RTC because it doesn't handle the control registers
- * and also doesn't provide proper timing (32kHz device needs proper timing).
- * Reading of RTC should be OK on real machines.
- * (PES)
+ *
+ * The following code is based on a review of the above sources together
+ * with disassemblies of TT and Falcon TOS.
  */
 #define NVRAM_RTC_SECONDS 0
 #define NVRAM_RTC_MINUTES 2
@@ -839,78 +845,102 @@ static void msetdt(ULONG dt)
 #define NVRAM_RTC_DAYS    7
 #define NVRAM_RTC_MONTHS  8
 #define NVRAM_RTC_YEARS   9
+#define NVRAM_RTC_REG_A   10
+#define NVRAM_RTC_REG_B   11
+#define NVRAM_RTC_REG_C   12
+#define NVRAM_RTC_REG_D   13
+
+/*
+ * Internal structure for holding values from RTC.
+ */
+struct clkreg {
+    UBYTE years, months, days;
+    UBYTE hours, minutes, seconds;
+};
 
 /* Offset to be added to the NVRAM RTC year to get the actual year.
  * Beware, this value depends on the ROM OS version.
  * See clock_init() for details. */
 static int nvram_rtc_year_offset;
 
-static void ndosettime(UWORD time)
+static WORD nvram_getregs(struct clkreg *clk)
 {
-    struct hms tm;
+    WORD old_sr;
 
-    extract_time(&tm, time);
+    if ((get_nvram_rtc(NVRAM_RTC_REG_D) & 0x80) == 0)   /* VRT==0 => invalid date/time */
+        return -1;
 
-    KDEBUG(("ndosettime() %02d:%02d:%02d\n", tm.hour, tm.minute, tm.second));
+    old_sr = set_sr(0x2700);                        /* prevent interrupts */
 
-    set_nvram_rtc(NVRAM_RTC_SECONDS, tm.second);
-    set_nvram_rtc(NVRAM_RTC_MINUTES, tm.minute);
-    set_nvram_rtc(NVRAM_RTC_HOURS, tm.hour);
+    while(get_nvram_rtc(NVRAM_RTC_REG_A) & 0x80)    /* wait for UIP == 0 */
+        ;
+
+    clk->seconds = get_nvram_rtc(NVRAM_RTC_SECONDS);
+    clk->minutes = get_nvram_rtc(NVRAM_RTC_MINUTES);
+    clk->hours = get_nvram_rtc(NVRAM_RTC_HOURS);
+    clk->days = get_nvram_rtc(NVRAM_RTC_DAYS);
+    clk->months = get_nvram_rtc(NVRAM_RTC_MONTHS);
+    clk->years = get_nvram_rtc(NVRAM_RTC_YEARS);
+
+    set_sr(old_sr);
+
+    KDEBUG(("nvram_getregs(): %02d/%02d/%02d  %02d:%02d:%02d\n",
+            clk->years, clk->months, clk->days, clk->hours, clk->minutes, clk->seconds));
+
+    return 0;
 }
 
-static UWORD ndogettime(void)
+static void nvram_setregs(struct clkreg *clk)
 {
-    UWORD seconds = get_nvram_rtc(NVRAM_RTC_SECONDS);
-    UWORD minutes = get_nvram_rtc(NVRAM_RTC_MINUTES);
-    UWORD hours = get_nvram_rtc(NVRAM_RTC_HOURS);
-    UWORD time;
+    KDEBUG(("nvram_setregs(): %02d/%02d/%02d  %02d:%02d:%02d\n",
+            clk->years, clk->months, clk->days, clk->hours, clk->minutes, clk->seconds));
 
-    KDEBUG(("ndogettime() %02d:%02d:%02d\n", hours, minutes, seconds));
-
-    time = (seconds >> 1) | (minutes << 5) | (hours << 11);
-
-    return time;
-}
-
-static void ndosetdate(UWORD date)
-{
-    struct ymd dt;
-
-    extract_date(&dt, date);
-    dt.year -= nvram_rtc_year_offset;
-
-    KDEBUG(("ndosetdate() %02d/%02d/%02d\n", dt.year, dt.month, dt.day));
-
-    set_nvram_rtc(NVRAM_RTC_DAYS, dt.day);
-    set_nvram_rtc(NVRAM_RTC_MONTHS, dt.month);
-    set_nvram_rtc(NVRAM_RTC_YEARS, dt.year);
-}
-
-static UWORD ndogetdate(void)
-{
-    UWORD days = get_nvram_rtc(NVRAM_RTC_DAYS);
-    UWORD months = get_nvram_rtc(NVRAM_RTC_MONTHS);
-    UWORD years = get_nvram_rtc(NVRAM_RTC_YEARS);
-    UWORD date;
-
-    KDEBUG(("ndogetdate() %02d/%02d/%02d\n", years, months, days));
-
-    date = (days & 0x1f) | ((months & 0xf) << 5) | ((years + nvram_rtc_year_offset) << 9);
-
-    return date;
+    set_nvram_rtc(NVRAM_RTC_REG_B, 0x80);   /* prevent updates, abort any in progress */
+    set_nvram_rtc(NVRAM_RTC_REG_A, 0x2A);   /* select 32768Hz frequency */
+    set_nvram_rtc(NVRAM_RTC_REG_B, 0x86);   /* select binary encoding, 24-hour clock */
+    set_nvram_rtc(NVRAM_RTC_YEARS, clk->years);
+    set_nvram_rtc(NVRAM_RTC_MONTHS, clk->months);
+    set_nvram_rtc(NVRAM_RTC_DAYS, clk->days);
+    set_nvram_rtc(NVRAM_RTC_HOURS, clk->hours);
+    set_nvram_rtc(NVRAM_RTC_MINUTES, clk->minutes);
+    set_nvram_rtc(NVRAM_RTC_SECONDS, clk->seconds);
+    set_nvram_rtc(NVRAM_RTC_REG_B, 0x06);   /* allow updates */
 }
 
 /*==== NVRAM RTC high-level functions ======================================*/
 
 static ULONG ngetdt(void)
 {
-    return MAKE_ULONG(ndogetdate(), ndogettime());
+    struct clkreg clk;
+    UWORD date, time;
+
+    if (nvram_getregs(&clk) < 0)
+        return 0UL;
+
+    date = (((clk.years+nvram_rtc_year_offset) & 0x7f) << 9)
+            | ((clk.months & 0xf) << 5) | (clk.days & 0x1f);
+    time = (clk.hours << 11) | (clk.minutes << 5) | (clk.seconds >> 1);
+
+    return MAKE_ULONG(date, time);
 }
 
 static void nsetdt(ULONG dt)
 {
-    ndosetdate(dt >> 16);
-    ndosettime(dt);
+    struct clkreg clk;
+    struct ymd date;
+    struct hms time;
+
+    extract_date(&date, HIWORD(dt));
+    clk.years = date.year - nvram_rtc_year_offset;
+    clk.months = date.month;
+    clk.days = date.day;
+
+    extract_time(&time, LOWORD(dt));
+    clk.hours = time.hour;
+    clk.minutes = time.minute;
+    clk.seconds = time.second;
+
+    nvram_setregs(&clk);
 }
 
 #endif /* CONF_WITH_NVRAM */
@@ -1043,6 +1073,66 @@ static void isetdt(ULONG dt)
 
 #endif /* CONF_WITH_IKBD_CLOCK */
 
+#if CONF_WITH_ULTRASATAN_CLOCK /* CONF_WITH_ULTRASATAN_CLOCK */
+
+static ULONG ultrasatan_getdt(void)
+{
+    UBYTE hour, minute, second, day, month;
+    UWORD year, date, time;
+
+    int ret;
+    ret = acsi_ioctl(ultrasatan_id,ULTRASATAN_GET_CLOCK,NULL);
+
+    /* check return status and format */
+    if (ret != 0 || memcmp(dskbufp,"RTC",3) != 0)
+        return 0;
+
+    year = (UWORD)dskbufp[3];
+    month = dskbufp[4];
+    day = dskbufp[5];
+    hour = dskbufp[6];
+    minute = dskbufp[7];
+    second = dskbufp[8];
+
+    KDEBUG(("ultrasatan_getdt(): read clock value %02d-%02d-%02d %02d:%02d:%02d\n", year, month, day, hour, minute, second));
+
+    date = (year + 20) << 9 | (month & 0xf) << 5 | (day & 0x1f);
+    time = (hour << 11) | (minute << 5) | (second >> 1);
+
+    return MAKE_ULONG(date, time);
+}
+
+static ULONG ultrasatan_setdt(ULONG dt)
+{
+    struct ymd date;
+    struct hms time;
+    int ret;
+
+    extract_date(&date, HIWORD(dt));
+    extract_time(&time, LOWORD(dt));
+
+    KDEBUG(("ultrasatan_setdt(): new date/time %02d-%02d-%02d %02d:%02d:%02d\n", date.year - 20, date.month, date.day, time.hour, time.minute, time.second));
+
+    dskbufp[0] = 'R';
+    dskbufp[1] = 'T';
+    dskbufp[2] = 'C';
+
+    dskbufp[3] = (UBYTE)(date.year - 20);
+    dskbufp[4] = date.month;
+    dskbufp[5] = date.day;
+    dskbufp[6] = time.hour;
+    dskbufp[7] = time.minute;
+    dskbufp[8] = time.second;
+
+    KDEBUG(("ultrasatan_setdt(): setting clock\n"));
+
+    ret = acsi_ioctl(ultrasatan_id,ULTRASATAN_SET_CLOCK,NULL);
+
+    return ret;
+}
+
+#endif /* CONF_WITH_ULTRASATAN_CLOCK */
+
 /* internal init */
 
 void clock_init(void)
@@ -1159,6 +1249,12 @@ void settime(LONG time)
         icdsetdt(time);
     }
 #endif  /* CONF_WITH_ICDRTC */
+#if CONF_WITH_ULTRASATAN_CLOCK
+    else if (has_ultrasatan_clock)
+    {
+        ultrasatan_setdt(time);
+    }
+#endif /* CONF_WITH_ULTRASATAN_CLOCK */
     else
     {
 #if CONF_WITH_IKBD_CLOCK
@@ -1179,6 +1275,12 @@ LONG gettime(void)
         return amiga_getdt();
     }
 #endif /* MACHINE_AMIGA */
+#ifdef MACHINE_LISA
+    else if (TRUE)
+    {
+        return lisa_getdt();
+    }
+#endif /* MACHINE_LISA */
 #if CONF_WITH_NVRAM
     else if (has_nvram)
     {
@@ -1203,6 +1305,12 @@ LONG gettime(void)
         return icdgetdt();
     }
 #endif  /* CONF_WITH_ICDRTC */
+#if CONF_WITH_ULTRASATAN_CLOCK
+    else if (has_ultrasatan_clock)
+    {
+        return ultrasatan_getdt();
+    }
+#endif /* CONF_WITH_ULTRASATAN_CLOCK */
     else
     {
 #if CONF_WITH_IKBD_CLOCK

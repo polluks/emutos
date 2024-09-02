@@ -4,7 +4,7 @@
  * This file exists to allow AHDI stuff to be referenced by both
  * the BDOS and the BIOS.
  *
- * Copyright (C) 2014-2019 The EmuTOS development team
+ * Copyright (C) 2014-2020 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -16,16 +16,18 @@
 #ifndef _AHDI_H
 #define _AHDI_H
 
+#define PUN_MAXUNITS    16      /* architectural */
+
 typedef struct
 {
-    UWORD puns;                 /* number of block devices (partitions) */
-    UBYTE pun[16];              /* bus/device for this partition */
-    ULONG partition_start[16];
+    UWORD puns;                 /* number of physical devices */
+    UBYTE pun[PUN_MAXUNITS];    /* bus/device for this partition (see below) */
+    ULONG partition_start[PUN_MAXUNITS];
     ULONG cookie;               /* 'AHDI' if following valid */
     ULONG *cookie_ptr;          /* points to 'cookie' */
     UWORD version_num;          /* AHDI version */
     UWORD max_sect_siz;         /* maximum logical sector size */
-    LONG reserved[16];
+    LONG reserved[PUN_MAXUNITS];
 } PUN_INFO;
 
 /* masks for pun[] array above: */
@@ -33,7 +35,7 @@ typedef struct
 #define PUN_UNIT        0x7     /* Unit number */
 #define PUN_SCSI        0x8     /* 1=SCSI 0=ACSI */
 #define PUN_IDE         0x10    /* Falcon IDE */
-//#define PUN_REMOVABLE   0x40    /* Removable media */
+#define PUN_REMOVABLE   0x40    /* Removable media */
 #define PUN_VALID       0x80    /* zero if valid */
 
 extern PUN_INFO *pun_ptr;

@@ -1,7 +1,7 @@
 #
 # release.mk - Makefile fragment for building releases
 #
-# Copyright (C) 2011-2019 The EmuTOS development team.
+# Copyright (C) 2011-2024 The EmuTOS development team.
 #
 # Authors:
 #  VRI      Vincent Rivière
@@ -18,7 +18,7 @@
 # This subset of the doc directory will be included in all the binary archives
 DOCFILES = doc/announce.txt doc/authors.txt doc/bugs.txt doc/changelog.txt \
   doc/emudesk.txt doc/incompatible.txt doc/license.txt doc/status.txt \
-  doc/todo.txt doc/xhdi.txt
+  doc/todo.txt doc/tools.txt doc/xhdi.txt
 
 # This subset of the extras directory will be included in all the binary archives
 # that have a desktop
@@ -49,14 +49,35 @@ release-src:
 	tar -C $(RELEASE_DIR) --owner=0 --group=0 -zcf $(RELEASE_DIR)/$(RELEASE_SRC).tar.gz $(RELEASE_SRC)
 	rm -r $(RELEASE_DIR)/$(RELEASE_SRC)
 
+.PHONY: release-1024k
+NODEP += release-1024k
+RELEASE_1024K = emutos-1024k-$(VERSION)
+release-1024k:
+	$(MAKE) clean
+	$(MAKE) 1024
+	mkdir $(RELEASE_DIR)/$(RELEASE_1024K)
+	cp etos1024k.img etos1024k.sym $(RELEASE_DIR)/$(RELEASE_1024K)
+	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_1024K)/emuicon.def
+	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_1024K)/emuicon.rsc
+	cat doc/readme-1024k.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_1024K)/readme.txt
+	mkdir $(RELEASE_DIR)/$(RELEASE_1024K)/doc
+	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_1024K)/doc
+	mkdir $(RELEASE_DIR)/$(RELEASE_1024K)/extras
+	cp $(EXTRAFILES) $(RELEASE_DIR)/$(RELEASE_1024K)/extras
+	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_1024K)/extras/emucurs.def
+	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_1024K)/extras/emucurs.rsc
+	find $(RELEASE_DIR)/$(RELEASE_1024K) -name '*.txt' -exec unix2dos '{}' ';'
+	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_1024K).zip $(RELEASE_1024K)
+	rm -r $(RELEASE_DIR)/$(RELEASE_1024K)
+
 .PHONY: release-512k
 NODEP += release-512k
 RELEASE_512K = emutos-512k-$(VERSION)
 release-512k:
 	$(MAKE) clean
-	$(MAKE) 512
+	$(MAKE) all512
 	mkdir $(RELEASE_DIR)/$(RELEASE_512K)
-	cp etos512k.img etos512k.sym $(RELEASE_DIR)/$(RELEASE_512K)
+	cp etos512*.img $(RELEASE_DIR)/$(RELEASE_512K)
 	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_512K)/emuicon.def
 	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_512K)/emuicon.rsc
 	cat doc/readme-512k.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_512K)/readme.txt
@@ -155,9 +176,9 @@ NODEP += release-firebee
 RELEASE_FIREBEE = emutos-firebee-$(VERSION)
 release-firebee:
 	$(MAKE) clean
-	$(MAKE) firebee
+	$(MAKE) allfirebee
 	mkdir $(RELEASE_DIR)/$(RELEASE_FIREBEE)
-	cp $(SREC_FIREBEE) $(RELEASE_DIR)/$(RELEASE_FIREBEE)
+	cp etosfb*.s19 $(RELEASE_DIR)/$(RELEASE_FIREBEE)
 	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_FIREBEE)/emuicon.def
 	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_FIREBEE)/emuicon.rsc
 	cat doc/readme-firebee.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_FIREBEE)/readme.txt
@@ -274,6 +295,27 @@ release-prg:
 	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_PRG).zip $(RELEASE_PRG)
 	rm -r $(RELEASE_DIR)/$(RELEASE_PRG)
 
+.PHONY: release-prg256
+NODEP += release-prg256
+RELEASE_PRG256 = emutos-prg256-$(VERSION)
+release-prg256:
+	$(MAKE) clean
+	$(MAKE) allprg256
+	mkdir $(RELEASE_DIR)/$(RELEASE_PRG256)
+	cp emu256*.prg $(RELEASE_DIR)/$(RELEASE_PRG256)
+	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_PRG256)/emuicon.def
+	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_PRG256)/emuicon.rsc
+	cat doc/readme-prg256.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_PRG256)/readme.txt
+	mkdir $(RELEASE_DIR)/$(RELEASE_PRG256)/doc
+	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_PRG256)/doc
+	mkdir $(RELEASE_DIR)/$(RELEASE_PRG256)/extras
+	cp $(EXTRAFILES) $(RELEASE_DIR)/$(RELEASE_PRG256)/extras
+	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_PRG256)/extras/emucurs.def
+	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_PRG256)/extras/emucurs.rsc
+	find $(RELEASE_DIR)/$(RELEASE_PRG256) -name '*.txt' -exec unix2dos '{}' ';'
+	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_PRG256).zip $(RELEASE_PRG256)
+	rm -r $(RELEASE_DIR)/$(RELEASE_PRG256)
+
 .PHONY: release-floppy
 NODEP += release-floppy
 RELEASE_FLOPPY = emutos-floppy-$(VERSION)
@@ -295,6 +337,27 @@ release-floppy:
 	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_FLOPPY).zip $(RELEASE_FLOPPY)
 	rm -r $(RELEASE_DIR)/$(RELEASE_FLOPPY)
 
+.PHONY: release-pak3
+NODEP += release-pak3
+RELEASE_PAK3 = emutos-pak3-$(VERSION)
+release-pak3:
+	$(MAKE) clean
+	$(MAKE) allpak3
+	mkdir $(RELEASE_DIR)/$(RELEASE_PAK3)
+	cp etospak3*.img $(RELEASE_DIR)/$(RELEASE_PAK3)
+	cp desk/icon.def $(RELEASE_DIR)/$(RELEASE_PAK3)/emuicon.def
+	cp desk/icon.rsc $(RELEASE_DIR)/$(RELEASE_PAK3)/emuicon.rsc
+	cat doc/readme-pak3.txt readme.txt >$(RELEASE_DIR)/$(RELEASE_PAK3)/readme.txt
+	mkdir $(RELEASE_DIR)/$(RELEASE_PAK3)/doc
+	cp $(DOCFILES) $(RELEASE_DIR)/$(RELEASE_PAK3)/doc
+	mkdir $(RELEASE_DIR)/$(RELEASE_PAK3)/extras
+	cp $(EXTRAFILES) $(RELEASE_DIR)/$(RELEASE_PAK3)/extras
+	cp aes/mform.def $(RELEASE_DIR)/$(RELEASE_PAK3)/extras/emucurs.def
+	cp aes/mform.rsc $(RELEASE_DIR)/$(RELEASE_PAK3)/extras/emucurs.rsc
+	find $(RELEASE_DIR)/$(RELEASE_PAK3) -name '*.txt' -exec unix2dos '{}' ';'
+	cd $(RELEASE_DIR) && zip -9 -r $(RELEASE_PAK3).zip $(RELEASE_PAK3)
+	rm -r $(RELEASE_DIR)/$(RELEASE_PAK3)
+
 .PHONY: release-emucon
 NODEP += release-emucon
 RELEASE_EMUCON = emucon
@@ -312,9 +375,9 @@ release-emucon:
 .PHONY: release
 NODEP += release
 release: clean release-clean release-mkdir \
-  release-src release-512k release-256k release-192k release-cartridge \
+  release-src release-1024k release-512k release-256k release-192k release-cartridge \
   release-aranym release-firebee release-amiga-rom release-amiga-floppy \
-  release-m548x-dbug release-m548x-bas release-prg release-floppy \
-  release-emucon
+  release-m548x-dbug release-m548x-bas release-prg release-prg256 release-floppy \
+  release-pak3 release-emucon
 	$(MAKE) clean
 	@echo '# Packages successfully generated inside $(RELEASE_DIR)'

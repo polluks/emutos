@@ -3,7 +3,7 @@
 /*      for 2.3                 9/25/87                 mdf             */
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2019 The EmuTOS development team
+*                 2002-2024 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -40,7 +40,7 @@
  * used by pn_active() when building the list of FNODEs to display, and
  * by search_recursive() when searching for matching FNODEs.
  */
-#define DISPATTR    FA_SUBDIR    
+#define DISPATTR    FA_SUBDIR
 
 
 /*
@@ -161,10 +161,7 @@ typedef struct
 
 /*GLOBAL*/ WORD         g_rmsg[8];              /* general AES message area */
 
-/*GLOBAL*/ WORD         g_xdesk;                /* desktop work area coordinates */
-/*GLOBAL*/ WORD         g_ydesk;
-/*GLOBAL*/ WORD         g_wdesk;
-/*GLOBAL*/ WORD         g_hdesk;
+/*GLOBAL*/ GRECT        g_desk;                 /* desktop work area coordinates */
 
 /*GLOBAL*/ WORD         g_croot;                /* current pseudo root  */
 
@@ -176,13 +173,14 @@ typedef struct
 /*GLOBAL*/ char         g_cdelepref;            /* confirm delete (boolean)     */
 /*GLOBAL*/ char         g_covwrpref;            /* confirm overwrite (boolean)  */
 /*GLOBAL*/ char         g_cdclkpref;            /* double click speed           */
-/*GLOBAL*/ char         g_cmclkpref;            /* click for menu (boolean)     */
 /*GLOBAL*/ char         g_ctimeform;            /* time format                  */
 /*GLOBAL*/ char         g_cdateform;            /* date format                  */
 /*GLOBAL*/ char         g_blitter;              /* blitter enabled (boolean)    */
 /*GLOBAL*/ char         g_cache;                /* cache enabled (boolean)      */
 /*GLOBAL*/ char         g_appdir;               /* default is app dir (boolean) */
 /*GLOBAL*/ char         g_fullpath;             /* full path for arg (boolean)  */
+
+/*GLOBAL*/ LONG         g_idt;                  /* value from _IDT cookie */
 
 /*GLOBAL*/ char         g_work[256];            /* general text work area */
 

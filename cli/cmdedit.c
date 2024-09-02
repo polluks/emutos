@@ -1,7 +1,7 @@
 /*
  * EmuCON2 command history handling
  *
- * Copyright (C) 2013-2019 The EmuTOS development team
+ * Copyright (C) 2013-2024 The EmuTOS development team
  *
  * Authors:
  *  RFB    Roger Burrows
@@ -49,9 +49,7 @@ char prompt[MAXPATHLEN];
 
     save_history_num = history_num;     /* so that edit_line() can play with it */
 
-    prompt[0] = Dgetdrv() + 'A';
-    prompt[1] = ':';
-    get_path(prompt+2);
+    get_path(prompt,0);
     message(prompt);
     message(">");
     while(1) {
@@ -292,6 +290,10 @@ WORD n, word = 0;
  *
  *  handles backspace or delete
  */
+#ifdef STANDALONE_CONSOLE
+/* Avoid implementation using memmove(), as it isn't available */
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+#endif
 PRIVATE void delete_char(char *line,WORD pos,WORD len,WORD backspace)
 {
 char *p;
@@ -392,7 +394,7 @@ PRIVATE char *insertion_point(char *start)
 char *p, *ins = NULL;
 
     for (p = ins = start; *p; p++) {
-        if ((*p == ':') || (*p == '\\'))
+        if ((*p == DRIVESEP) || (*p == PATHSEP))
             ins = p+1;
     }
 
@@ -447,8 +449,6 @@ PRIVATE LONG getfirstnondot(const char *buffer,WORD executable_only)
 LONG rc;
 
     for (rc = Fsfirst(buffer,0x17); !rc; rc=Fsnext()) {
-        if (rc < 0L)
-            break;
         if (dta->d_fname[0] == '.') /* ignore . & .. */
             continue;
         if (!executable_only)

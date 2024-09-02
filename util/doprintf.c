@@ -1,7 +1,7 @@
 /*
  * doprintf.c - a simple printf() implementation
  *
- * Copyright (C) 2019 The EmuTOS development team
+ * Copyright (C) 2019-2020 The EmuTOS development team
  *
  * Authors:
  *  RFB   Roger Burrows
@@ -75,7 +75,7 @@ static void *numconv(char *p, unsigned long value, int radix, int precision, uns
     return p;
 }
 
-int doprintf(void (*outc)(int), const char *fmt, va_list ap)
+int doprintf(void (*outc)(int), const char *RESTRICT fmt, va_list ap)
 {
     char *p, *bufstart, buf[MAXNUMLEN];
     long longval;

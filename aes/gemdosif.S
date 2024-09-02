@@ -1,7 +1,7 @@
 /*
  * gemdosif.S - Assembler part of the GEMDOS interface
  *
- * Copyright 2002-2019, The EmuTOS development team
+ * Copyright 2002-2021, The EmuTOS development team
  *           1999, Caldera Thin Clients, Inc.
  *           1987, Digital Research Inc.
  *
@@ -248,7 +248,6 @@ trapaes:
 
         movea.l _rlr,a6
         movea.l PD_UDA(a6),a6
-        move.w  #1,UDA_INSUPER(a6)
         move.l  a0,UDA_SPUSER(a6)
         move.l  sp,UDA_OLDSPSUPER(a6)
         movea.l UDA_SPSUPER(a6),sp
@@ -259,12 +258,10 @@ trapaes:
         jsr     _super                  // jump to supervisor entry point
         addq.l  #6,sp                   // restore stack pointer
 
-supret:                                 // return from gementry
         jbsr    _disable_interrupts     // mask out interrupts
 
         movea.l _rlr,a0
         movea.l PD_UDA(a0),a0
-        clr.w   UDA_INSUPER(a0)
         move.l  sp,UDA_SPSUPER(a0)
         movea.l UDA_OLDSPSUPER(a0),sp
         movea.l UDA_SPUSER(a0),a0
@@ -398,10 +395,14 @@ _tikcod:
         subq.l  #1,_CMP_TICK
         jne     L2234
 
-        move.l  _NUM_TICK,-(sp)
+        move.l  _NUM_TICK,-(sp) // try to create an entry in the fork ring
         move.l  #_tchange,-(sp)
         jsr     _forkq
         addq.l  #8,sp
+        tst.w   d0              // did it work?
+        jeq     L2234
+        addq.l  #1,_CMP_TICK    // no, reset so that we try again on the next tick
+
 L2234:
         move.w  #1,-(sp)
         jsr     _b_delay

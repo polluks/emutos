@@ -1,9 +1,9 @@
 /*
- * text.c - uses text_blt to move data from a font table to screen
+ * vdi_text.c - uses text_blt to move data from a font table to screen
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2019 The EmuTOS development team
+ * Copyright 2002-2024 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -235,8 +235,16 @@ static BOOL ok_for_direct_blit(Vwk *vwk, WORD width, JUSTINFO *justified)
     if (justified)
         return FALSE;
 
-    if (DESTX & 0x0007)
-        return FALSE;
+#if CONF_WITH_VDI_16BIT
+    if (TRUECOLOR_MODE)     /* always byte-aligned */
+    {
+    }
+    else
+#endif
+    {
+        if (DESTX & 0x0007)
+            return FALSE;
+    }
 
     fnt_ptr = vwk->cur_font;
 
@@ -290,8 +298,6 @@ static void output_text(Vwk *vwk, WORD count, WORD *str, WORD width, JUSTINFO *j
     WORD temp;
     const Fonthead *fnt_ptr;
     Point * point;
-
-    CONTRL[2] = 0;      /* # points in PTSOUT */
 
     if (count <= 0)     /* quick out for unlikely occurrence */
         return;
@@ -542,6 +548,28 @@ void vdi_v_gtext(Vwk * vwk)
     output_text(vwk, CONTRL[3], INTIN, -1, NULL);
 }
 
+#if CONF_WITH_GDOS
+/*
+ * trnsfont - converts a font to standard form
+ *
+ * The routine just does byte swapping.
+ *
+ * input:
+ *     FWIDTH = width of font data in bytes.
+ *     DELY   = number of scan lines in font.
+ *     FBASE  = starting address of the font data.
+ */
+static void trnsfont(void)
+{
+    WORD cnt, i;
+    UWORD *addr;
+
+    cnt = (FWIDTH * DELY) / sizeof(*addr);
+    for (i = 0, addr = (UWORD *)FBASE; i < cnt; i++, addr++)
+        swpw(*addr);
+}
+#endif
+
 void text_init2(Vwk * vwk)
 {
     vwk->cur_font = def_font;
@@ -615,6 +643,19 @@ void text_init(void)
                 i++;            /* Increment count of heights */
             }
             /* end if system font */
+
+#if CONF_WITH_GDOS
+            /*
+             * all builtin fonts have standard format, so this test is
+             * only useful when we are supporting loaded fonts
+             */
+            if (!(fnt_ptr->flags & F_STDFORM)) {
+                FBASE = fnt_ptr->dat_table;
+                FWIDTH = fnt_ptr->form_width;
+                DELY = fnt_ptr->form_height;
+                trnsfont();
+            }
+#endif
         } while ((fnt_ptr = fnt_ptr->next_font));
     }
     DEV_TAB[5] = i;                     /* number of sizes */
@@ -628,8 +669,6 @@ static void setup_width_height(const Fonthead *font)
 {
     WORD *p;
     UWORD top;
-
-    CONTRL[2] = 2;      /* # points in PTSOUT */
 
     p = PTSOUT;
     *p++ = font->max_char_width;
@@ -645,7 +684,7 @@ void vdi_vst_height(Vwk * vwk)
     const Fonthead *test_font, *single_font;
     WORD font_id;
     UWORD test_height;
-    char found;
+    BOOL found;
 
     font_id = vwk->cur_font->font_id;
     vwk->pts_mode = FALSE;
@@ -653,10 +692,11 @@ void vdi_vst_height(Vwk * vwk)
     /* Find the smallest font in the requested face */
     chain_ptr = font_ring;
 
-    found = 0;
+    found = FALSE;
     while (!found && (test_font = *chain_ptr++)) {
         do {
-            found = (test_font->font_id == font_id);
+            if (test_font->font_id == font_id)
+                found = TRUE;
         } while (!found && (test_font = test_font->next_font));
     }
 
@@ -783,17 +823,18 @@ void vdi_vst_point(Vwk * vwk)
     const Fonthead **chain_ptr, *double_font;
     const Fonthead *test_font, *single_font;
     WORD test_height, h;
-    char found;
+    BOOL found;
 
     font_id = vwk->cur_font->font_id;
     vwk->pts_mode = TRUE;
 
     /* Find the smallest font in the requested face */
     chain_ptr = font_ring;
-    found = 0;
+    found = FALSE;
     while (!found && (test_font = *chain_ptr++)) {
         do {
-            found = (test_font->font_id == font_id);
+            if (test_font->font_id == font_id)
+                found = TRUE;
         } while (!found && (test_font = test_font->next_font));
     }
 
@@ -832,7 +873,7 @@ void vdi_vst_point(Vwk * vwk)
 
     setup_width_height(single_font);    /* set up return values */
 
-    CONTRL[4] = 1;          /* also return point size actually set */
+    /* also return point size actually set */
     INTOUT[0] = single_font->point;
 }
 
@@ -840,7 +881,6 @@ void vdi_vst_point(Vwk * vwk)
 void vdi_vst_effects(Vwk * vwk)
 {
     INTOUT[0] = vwk->style = INTIN[0] & INQ_TAB[2];
-    CONTRL[4] = 1;
 }
 
 
@@ -859,8 +899,6 @@ void vdi_vst_alignment(Vwk * vwk)
     if (a < 0 || a > 5)
         a = 0;
     vwk->v_align = *int_out = a;
-
-    CONTRL[4] = 2;
 }
 
 
@@ -895,7 +933,6 @@ void vdi_vst_rotation(Vwk * vwk)
 
     /* this sets a value of 0, 900, 1800, 2700 or 3600, just like TOS3/TOS4 */
     INTOUT[0] = vwk->chup = ((angle + 450) / 900) * 900;
-    CONTRL[4] = 1;
 }
 
 
@@ -904,7 +941,7 @@ void vdi_vst_font(Vwk * vwk)
     WORD *old_intin, point, *old_ptsout, dummy[4], *old_ptsin;
     WORD face;
     const Fonthead *test_font, **chain_ptr;
-    char found;
+    BOOL found;
 
     test_font = vwk->cur_font;
     point = test_font->point;
@@ -913,10 +950,11 @@ void vdi_vst_font(Vwk * vwk)
 
     chain_ptr = font_ring;
 
-    found = 0;
+    found = FALSE;
     while (!found && (test_font = *chain_ptr++)) {
         do {
-            found = (test_font->font_id == face);
+            if (test_font->font_id == face)
+                found = TRUE;
         } while (!found && (test_font = test_font->next_font));
     }
 
@@ -943,8 +981,6 @@ void vdi_vst_font(Vwk * vwk)
     PTSIN = old_ptsin;
     PTSOUT = old_ptsout;
 
-    CONTRL[2] = 0;
-    CONTRL[4] = 1;
     INTOUT[0] = vwk->cur_font->font_id;
 }
 
@@ -955,7 +991,6 @@ void vdi_vst_color(Vwk * vwk)
 
     r = validate_color_index(INTIN[0]);
 
-    CONTRL[4] = 1;
     INTOUT[0] = r;
     vwk->text_color = MAP_COL[r];
 }
@@ -982,8 +1017,6 @@ void vdi_vqt_attributes(Vwk * vwk)
     *pointer++ = fnt_ptr->max_cell_width;
     *pointer = fnt_ptr->top + fnt_ptr->bottom + 1;  /* handles scaled fonts */
 
-    CONTRL[2] = 2;
-    CONTRL[4] = 6;
     flip_y = 1;
 }
 
@@ -994,8 +1027,6 @@ void vdi_vqt_extent(Vwk * vwk)
 
     height = calc_height(vwk);
     width = calc_width(vwk, CONTRL[3], INTIN);
-
-    CONTRL[2] = 4;
 
     bzero(PTSOUT,8*sizeof(WORD));
     switch (vwk->chup) {
@@ -1061,8 +1092,6 @@ void vdi_vqt_width(Vwk * vwk)
         }
     }
 
-    CONTRL[2] = 3;
-    CONTRL[4] = 1;
     flip_y = 1;
 }
 
@@ -1070,23 +1099,25 @@ void vdi_vqt_width(Vwk * vwk)
 
 void vdi_vqt_name(Vwk * vwk)
 {
-    WORD i, element;
+    WORD i, element, current_font_id;
     const char *name;
     WORD *int_out;
-    const Fonthead *tmp_font;
-    char found;
-
-    const Fonthead **chain_ptr;
+    const Fonthead *tmp_font, **chain_ptr;
+    BOOL found;
 
     element = INTIN[0];
     chain_ptr = font_ring;
     i = 0;
+    current_font_id = -1;
 
-    found = 0;
+    found = FALSE;
     while (!found && (tmp_font = *chain_ptr++)) {
         do {
-            if ((++i) == element)
-                found = 1;
+            if (tmp_font->font_id != current_font_id) {
+                current_font_id = tmp_font->font_id;    /* remember current id */
+                if ((++i) == element)
+                    found = TRUE;
+            }
         } while (!found && (tmp_font = tmp_font->next_font));
     }
 
@@ -1096,13 +1127,10 @@ void vdi_vqt_name(Vwk * vwk)
 
     int_out = INTOUT;
     *int_out++ = tmp_font->font_id;
-    for (i = 1, name = tmp_font->name; (*int_out++ = *name++); i++);
-    while (i < 33) {
+    for (i = 0, name = tmp_font->name; (*int_out++ = *name++); i++)
+        ;
+    while (i++ < FONT_NAME_LEN)
         *int_out++ = 0;
-        i++;
-    }
-    CONTRL[4] = 33;
-
 }
 
 
@@ -1142,15 +1170,13 @@ void vdi_vqt_fontinfo(Vwk * vwk)
     *pointer++ = 0;
     *pointer = fnt_ptr->top;
 
-    CONTRL[2] = 5;
-    CONTRL[4] = 2;
     flip_y = 1;
 }
 
 
 void gdp_justified(Vwk * vwk)
 {
-    WORD spaces;
+    WORD spaces = 0;
     WORD expand;
     WORD interword, interchar;
     WORD cnt, width, max_x;
@@ -1169,7 +1195,7 @@ void gdp_justified(Vwk * vwk)
      * if interword adjustment required, count spaces
      */
     if (interword) {
-        for (i = 0, spaces = 0; i < cnt; i++)
+        for (i = 0; i < cnt; i++)
             if (*(pointer++) == ' ')
                 spaces++;
     }
@@ -1265,14 +1291,75 @@ void gdp_justified(Vwk * vwk)
 
 void vdi_vst_load_fonts(Vwk * vwk)
 {
-    CONTRL[4] = 1;
+#if CONF_WITH_GDOS
+    WORD id, count, *control;
+
+    Fonthead *first_font;
+
+    /* Init some common variables */
+    control = CONTRL;
+
+    /* You only get one chance to load fonts.  If fonts are linked in, exit  */
+    if (vwk->loaded_fonts) {
+        INTOUT[0] = 0;
+        return;
+    }
+
+    /* The inputs to this routine are :         */
+    /* CONTRL[7-8]   = Pointer to scratch buffer    */
+    /* CONTRL[9]     = Offset to buffer 2       */
+    /* CONTRL[10-11] = Pointer to first font    */
+
+    /* Init the global structures           */
+    vwk->scrpt2 = control[9];
+    vwk->scrtchp = (WORD *) ULONG_AT(&control[7]);
+
+    first_font = (Fonthead *) ULONG_AT(&control[10]);
+    vwk->loaded_fonts = first_font;
+
+    /* Find out how many distinct font id numbers have just been linked in. */
+    id = -1;
+    count = 0;
+
+    do {
+        /* Update the count of font id numbers, if necessary. */
+        if (first_font->font_id != id) {
+            id = first_font->font_id;
+            count++;
+        }
+
+        /* Make sure the font is in device specific format. */
+        if (!(first_font->flags & F_STDFORM)) {
+            FBASE = first_font->dat_table;
+            FWIDTH = first_font->form_width;
+            DELY = first_font->form_height;
+            trnsfont();
+            first_font->flags |= F_STDFORM;
+        }
+        first_font = first_font->next_font;
+    } while (first_font);
+
+    font_ring[2] = vwk->loaded_fonts;
+
+    /* Update the device table count of faces. */
+    vwk->num_fonts += count;
+    INTOUT[0] = count;
+#else
     INTOUT[0] = 0;      /* we loaded no new fonts */
+#endif
 }
 
 
 void vdi_vst_unload_fonts(Vwk * vwk)
 {
-    /* nothing to do */
+#if CONF_WITH_GDOS
+    /* Since we always unload all fonts, this is easy. */
+    vwk->loaded_fonts = NULL;           /* No fonts installed */
+    font_ring[2] = NULL;
+    vwk->scrpt2 = SCRATCHBUF_OFFSET;    /* Reset pointers to default buffers */
+    vwk->scrtchp = vdishare.deftxbuf;
+    vwk->num_fonts = font_count;        /* Reset font count to default */
+#endif
 }
 
 

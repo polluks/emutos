@@ -1,7 +1,7 @@
 /*
  * kprint.c - our own printf variants (mostly for debug purposes)
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2021 The EmuTOS development team
  *
  * Authors:
  *  MAD     Martin Doering
@@ -31,9 +31,8 @@
 #include "super.h"      /* for Super() and SuperToUser() */
 #include "../bdos/bdosstub.h"
 #include "ikbd.h"
-#ifdef MACHINE_AMIGA
+#include "midi.h"
 #include "amiga.h"
-#endif
 
 #define DISPLAY_INSTRUCTION_AT_PC   0   /* set to 1 for extra info from dopanic() */
 #define DISPLAY_STACK               0   /* set to 1 for extra info from dopanic() */
@@ -65,7 +64,7 @@ static int vcprintf(const char *fmt, va_list ap)
     return doprintf(cprintf_outc, fmt, ap);
 }
 
-int cprintf(const char *fmt, ...)
+int cprintf(const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;
@@ -235,7 +234,7 @@ static int vkprintf(const char *fmt, va_list ap)
 }
 
 
-int kprintf(const char *fmt, ...)
+int kprintf(const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;
@@ -253,7 +252,7 @@ static int vkcprintf(const char *fmt, va_list ap)
   return vcprintf(fmt, ap);
 }
 
-int kcprintf(const char *fmt, ...)
+int kcprintf(const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;

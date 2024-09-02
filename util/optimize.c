@@ -4,7 +4,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2019 The EmuTOS development team
+*                 2002-2022 The EmuTOS development team
 
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -40,9 +40,10 @@
  *      . 'TEST.A.B.C' is converted to 'TEST    A.B'
  *      . 'TESTTESTTEST' is converted to 'TESTTEST'
  */
-void fmt_str(char *instr, char *outstr)
+void fmt_str(const char *instr, char *outstr)
 {
-    char *p, *q;
+    const char *p;
+    char *q;
 
     /* copy up to 8 bytes before the (first) dot (we eat excess bytes) */
     for (p = instr, q = outstr; *p; p++)
@@ -73,9 +74,10 @@ void fmt_str(char *instr, char *outstr)
  *  Does the reverse of fmt_str() above.  For example,
  *      'SAMPLE  PRG' is converted to 'SAMPLE.PRG'.
  */
-void unfmt_str(char *instr, char *outstr)
+void unfmt_str(const char *instr, char *outstr)
 {
-    char *pstr, temp;
+    const char *pstr;
+    char temp;
 
     pstr = instr;
     while(*pstr && ((pstr - instr) < 8))
@@ -98,7 +100,7 @@ void unfmt_str(char *instr, char *outstr)
  *  Copies the specified string to the te_ptext field of the TEDINFO
  *  structure for (tree,object), truncating if necessary to fit
  */
-void inf_sset(OBJECT *tree, WORD obj, char *pstr)
+void inf_sset(OBJECT *tree, WORD obj, const char *pstr)
 {
     char    *text;
     TEDINFO *ted;
@@ -126,7 +128,7 @@ void inf_sget(OBJECT *tree, WORD obj, char *pstr)
 
 /*
  *  Examines 'numobj' objects in 'tree', starting at 'baseobj', looking
- *  for a SELECTED onject.  Returns the relative number of the first
+ *  for a SELECTED object.  Returns the relative number of the first
  *  SELECTED object, or -1 if none of the objects is selected.
  */
 WORD inf_gindex(OBJECT *tree, WORD baseobj, WORD numobj)
@@ -145,10 +147,14 @@ WORD inf_gindex(OBJECT *tree, WORD baseobj, WORD numobj)
 
 
 /*
- *  Return 0 if cancel was selected, 1 if okay was selected, -1 if
- *  nothing was selected
+ *  Return 1 if the 'ok' object was selected, 0 if the 'ok'+1 object was
+ *  selected, -1 otherwise.  As a side effect, when returning 0 or 1,
+ *  the corresponding button is deselected.
+ *
+ *  Usage: generally this is expected to be used with a dialog where the
+ *  OK button is immediately followed by the Cancel button
  */
-WORD inf_what(OBJECT *tree, WORD ok, WORD cncl)
+WORD inf_what(OBJECT *tree, WORD ok)
 {
     WORD    field;
     OBJECT  *objptr;
@@ -222,7 +228,7 @@ char *filename_start(char *path)
     char *start = path;
 
     while (*path)
-        if (*path++ == '\\')
+        if (*path++ == PATHSEP)
             start = path;
 
     return start;
@@ -235,7 +241,7 @@ char *filename_start(char *path)
  *      pattern = "*.BAT"
  *      filename = "MYFILE.BAT"
  */
-WORD wildcmp(char *pattern,char *filename)
+WORD wildcmp(const char *pattern,const char *filename)
 {
 WORD i;
 

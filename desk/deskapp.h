@@ -3,7 +3,7 @@
 
 /*
 *       Copyright 1999, Caldera Thin Clients, Inc.
-*                 2002-2019 The EmuTOS development team
+*                 2002-2021 The EmuTOS development team
 *
 *       This software is licenced under the GNU Public License.
 *       Please see LICENSE.TXT for further information.
@@ -31,6 +31,7 @@
 #define AF_ISPARM 0x0008        /* requires input parameters (TTP or GTP) */
 #define AF_APPDIR 0x0010        /* use application dir (else top window) */
 #define AF_ISFULL 0x0020        /* use full path (else filename only) */
+#define AF_VIEWER 0x0040        /* this program is the default file viewer */
 #define AF_AUTORUN 0x0080       /* this program is to be autorun */
                             /* flags applicable to icons */
 #define AF_ISEXEC 0x4000        /* this is an executable file */
@@ -83,11 +84,15 @@
  * ANODE: store application information for desktop
  *
  * usage of a_pappl/a_pdata/a_pargs below:
- *  (1) for a file or folder on the desktop:
- *      a_pappl: name (used as icon label), up to 12 chars
- *      a_pdata: fully-qualified name
+ *  (1) for a standard desktop icon (disk, printer, trash):
+ *      a_pappl: icon label, up to 12 chars
+ *      a_pdata: unused
  *      a_pargs: unused
- *  (2) for an installed application:
+ *  (2) for a file or folder on the desktop:
+ *      a_pappl: fully-qualified name       | The usage of these fields was reversed
+ *      a_pdata: icon label, up to 12 chars | prior to rev level 2 of the .INF file
+ *      a_pargs: unused
+ *  (3) for an installed application:
  *      a_pappl: fully_qualified filename
  *      a_pdata: document type, as TOS wildcard, up to 5 chars (e.g. *.DAT)
  *      a_pargs: fixed argument(s) for application, up to 11 chars
@@ -97,7 +102,7 @@ struct _applstr
 {
     ANODE *a_next;
     UWORD a_flags;              /* see above for usage */
-    char a_funkey;              /* associated function key: 0=none, else 0x01-0x14 */
+    UBYTE a_funkey;             /* associated function key: 0=none, else 0x01-0x14 */
     char a_letter;              /* letter for icon */
     WORD a_type;                /* icon type (see above) */
     WORD a_obid;                /* object index */
@@ -141,7 +146,6 @@ typedef struct
     char cs_confdel;            /* Confirm deletes (boolean) */
     char cs_confovwr;           /* Confirm overwrite (boolean) */
     char cs_dblclick;           /* Double click speed */
-    char cs_mnuclick;           /* Click required to drop down menu (boolean) */
     char cs_timefmt;            /* Time format */
     char cs_datefmt;            /* Date format */
     char cs_blitter;            /* Blitter enabled (boolean) */
@@ -163,11 +167,15 @@ void app_start(void);
 void app_save(WORD todisk);
 void app_blddesk(void);
 ANODE *app_afind_by_id(WORD obid);
-ANODE *app_afind_by_name(WORD atype, WORD ignore, char *pspec, char *pname, WORD *pisapp);
+ANODE *app_afind_by_name(WORD atype, WORD ignore, char *pspec, char *pname, BOOL *pisapp);
 void nomem_alert(void) NORETURN;
 
 #if CONF_WITH_READ_INF
 BOOL app_read_inf(void);
+#endif
+
+#if CONF_WITH_VIEWER_SUPPORT
+ANODE *app_afind_viewer(void);
 #endif
 
 #endif  /* _DESKAPP_H */

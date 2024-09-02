@@ -1,7 +1,7 @@
 /*
  * has.h - BIOS HAS_* macros to determine if hardware is available
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2024 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -15,6 +15,12 @@ extern int is_aranym;
   #define IS_ARANYM is_aranym
 #else
   #define IS_ARANYM 0
+#endif
+
+#if DETECT_NATIVE_FEATURES
+  #define HAS_NATFEATS has_natfeats()   /* declared in natfeat.h */
+#else
+  #define HAS_NATFEATS 0
 #endif
 
 #if CONF_WITH_STE_SHIFTER
@@ -36,6 +42,13 @@ extern int has_videl;
   #define HAS_VIDEL has_videl
 #else
   #define HAS_VIDEL 0
+#endif
+
+#if CONF_WITH_NOVA
+extern int has_nova;    /* in nova.c */
+  #define HAS_NOVA has_nova
+#else
+  #define HAS_NOVA 0
 #endif
 
 #if CONF_WITH_TT_MFP
@@ -64,6 +77,10 @@ extern int has_monster_rtc;
   #define HAS_MONSTER_RTC 0
 #endif
 
+#if CONF_WITH_MAGNUM
+extern int has_magnum;
+#endif
+
 #if CONF_WITH_ICDRTC
 extern int has_icdrtc;    /* in clock.c */
   #define HAS_ICDRTC has_icdrtc
@@ -78,6 +95,14 @@ extern int has_megartc;   /* in clock.c */
   #define HAS_MEGARTC 0
 #endif
 
+#if CONF_WITH_ULTRASATAN_CLOCK
+extern int has_ultrasatan_clock; /* in disk.c */
+extern int ultrasatan_id; /* in disk.c */
+  #define HAS_ULTRASATAN_CLOCK has_ultrasatan_clock
+#else
+  #define HAS_ULTRASATAN_CLOCK 0
+#endif /* CONF_WITH_ULTRASATAN_CLOCK */
+
 #if CONF_WITH_NVRAM
 extern int has_nvram;     /* in nvram.c */
   #define HAS_NVRAM has_nvram
@@ -86,7 +111,7 @@ extern int has_nvram;     /* in nvram.c */
 #endif
 
 /* convenience macro: TRUE iff any kind of real time clock */
-#define HAS_RTC (HAS_NVRAM || HAS_MEGARTC || HAS_ICDRTC || HAS_MONSTER_RTC)
+#define HAS_RTC (HAS_NVRAM || HAS_MEGARTC || HAS_ICDRTC || HAS_MONSTER_RTC || HAS_ULTRASATAN_CLOCK)
 
 #if CONF_WITH_BLITTER
 extern int has_blitter;
@@ -107,6 +132,13 @@ extern int has_falcon_dmasound; /* in dmasound.c */
   #define HAS_DMASOUND 0
   #define HAS_MICROWIRE 0
   #define HAS_FALCON_DMASOUND 0
+#endif
+
+#if CONF_WITH_DSP
+extern int has_dsp;     /* in dsp.c */
+  #define HAS_DSP has_dsp
+#else
+  #define HAS_DSP 0
 #endif
 
 #if CONF_WITH_DIP_SWITCHES

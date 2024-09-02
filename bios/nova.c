@@ -1,7 +1,7 @@
 /*
  * nova.c - Nova/Vofa/Wittich adapter graphics card routines
  *
- * Copyright (C) 2018-2020 The EmuTOS development team
+ * Copyright (C) 2018-2024 The EmuTOS development team
  *
  * Authors:
  * Christian Zietz
@@ -40,6 +40,10 @@ int has_nova;
  */
 static int use_16bit_io;
 
+/* CrazyDots has a special clock generator register. */
+static int is_crazydots;
+#define CRAZY_DOTS_CLK_SEL 0x000
+
 /* Macros for VGA register access */
 #define VGAREG(x)   (*(novaregbase+(x)))
 /* Note that for 16 bit access high and low word are swapped by Nova HW.
@@ -48,7 +52,7 @@ static int use_16bit_io;
 
 #define CRTC_I  0x3D4   /* CRT Controller index and data ports */
 #define CRTC_D  0x3D5
-#define GDC_SEG 0x3CD   /* GDC segement select, index and data ports */
+#define GDC_SEG 0x3CD   /* GDC segment select, index and data ports */
 #define GDC_I   0x3CE
 #define GDC_D   0x3CF
 #define TS_I    0x3C4   /* Timing Sequencer index and data ports */
@@ -84,6 +88,18 @@ static int use_16bit_io;
 #define MISC_CNTL       0x7EEE
 #define R_MISC_CNTL     0x92EE
 
+/* ATI Mach64 only */
+#define M64_CONFIG_CHIP_ID  0x6EEC
+#define M64_SCRATCH_REG_1   0x46EC
+
+#define M64_GX_CHIP_ID      0xD7
+
+typedef enum {
+    MACH_NOT_DETECTED = 0,
+    MACH_32,
+    MACH_64
+} MACH_TYPE;
+
 static ULONG delay20us;
 #define SHORT_DELAY delay_loop(delay20us)
 #define LONG_DELAY  delay_loop(loopcount_1_msec)
@@ -101,11 +117,11 @@ static const UBYTE vga_TS_1_4[] = {0x01,0x01,0x00,0x06};
 /* Timing Sequencer registers 6...8 */
 static const UBYTE et4000_TS_6_8[] = {0x00,0xF4,0x03};
 /* Misc Output Write Register */
-static const UBYTE vga_MISC_W = 0x63; /* sync polarity: H-, V+ */
+static const UBYTE vga_MISC_W = 0xE3; /* sync polarity: H-, V- */
 /* CRT Controller: registers 0 - 0x18 */
 static const UBYTE vga_CRTC_0_0x18[] = {0x5F,0x4F,0x50,0x82,
-    0x54,0x80,0xBF,0x1F,0x00,0x40,0x00,0x00,0x00,0x00,0x00,
-    0x00,0x9C,0x0E,0x8F,0x28,0x00,0x96,0xB9,0xC3,0xFF};
+    0x54,0x80,0x0B,0x3E,0x00,0x40,0x00,0x00,0x00,0x00,0x00,
+    0x00,0xEA,0x0C,0xDF,0x28,0x00,0xE7,0x04,0xC3,0xFF};
 /* CRT Controller: registers 0x33 - 0x35 */
 static const UBYTE et4000_CRTC_0x33_0x35[] = {0x00,0x00,0x00};
 /* Attribute Controller: registers 0 - 0x16 */
@@ -182,79 +198,95 @@ static int check_for_vga(void)
     }
 }
 
-/* Detect Nova addresses */
+/* Detect Nova/Volksfarben/CrazyDots addresses */
 void detect_nova(void)
 {
     has_nova = 0;
     use_16bit_io = 1; /* Default for everything but Volksfarben/ST */
+    is_crazydots = 0;
 
     if (IS_BUS32 && HAS_VME && check_read_byte(0xFE900000UL+VIDSUB))
     {
-        /* Mach32(?) in Atari TT */
+        /* Nova/Mach32 in Atari TT */
         novaregbase = (UBYTE *)0xFE900000UL;
         novamembase = (UBYTE *)0xFE800000UL;
         has_nova = 1;
     }
-    else if (HAS_VME && check_read_byte(0x00DC0000UL+VIDSUB))
+    else if (HAS_VME && check_read_byte(0xFEDC0000UL+VIDSUB))
     {
-        /* Nova in Atari MegaSTE */
-        novaregbase = (UBYTE *)0x00DC0000UL;
-        novamembase = (UBYTE *)0x00C00000UL;
+        /*
+         * Nova/ET4000 in Atari MegaSTe or TT:
+         * In the MegaSTE the top 8 address bits are simply ignored.
+         */
+        novaregbase = (UBYTE *)0xFEDC0000UL;
+        novamembase = (UBYTE *)0xFEC00000UL;
         has_nova = 1;
     }
-    else if (((ULONG)phystop < 0x00C00000UL) && check_read_byte(0x00D00000UL+VIDSUB) && check_read_byte(0x00C00000UL))
+    else if (HAS_VME && check_read_byte(0xFEBF0000UL+VIDSUB))
     {
-        /* Volksfarben 4000 in ST: be sure via phystop that it's not RAM we read */
+        /* CrazyDots in Atari MegaSTe or TT */
+        novaregbase = (UBYTE *)0xFEBF0000UL;
+        novamembase = (UBYTE *)0xFEC00000UL;
+        has_nova = 1;
+        is_crazydots = 1;
+    }
+    else if (((ULONG)phystop < 0x00C00000UL) && check_read_byte(0x00D00000UL+VIDSUB) &&
+             check_read_byte(0x00C00000UL) && check_read_byte(0x00C80000UL))
+    {
+        /*
+         * Volksfarben 4000 in ST:
+         * - be sure via phystop that it's not RAM we read
+         * - check 0xC00000 and 0xC80000 to exclude MiSTer's Viking emulation
+         */
         novaregbase = (UBYTE *)0x00D00000UL;
         novamembase = (UBYTE *)0x00C00000UL;
         has_nova = 1;
         use_16bit_io = 0;
     }
-    else if (((ULONG)phystop < 0x00C00000UL) && check_read_byte(0x00CC0000UL+VIDSUB))
-    {
-        /* Nova in Atari MegaST: be sure via phystop that it's not RAM we read */
-        novaregbase = (UBYTE *)0x00CC0000UL;
-        novamembase = (UBYTE *)0x00C00000UL;
-        has_nova = 1;
-    }
-    else if (IS_BUS32 && HAS_VME && check_read_byte(0xFEDC0000UL+VIDSUB))
-    {
-        /* ET4000 in Atari TT */
-        novaregbase = (UBYTE *)0xFEDC0000UL;
-        novamembase = (UBYTE *)0xFEC00000UL;
-        has_nova = 1;
-    }
 
     if (has_nova)
     {
-        KDEBUG(("Nova detected at IO=%p / mem=%p\n", novaregbase, novamembase));
+        KDEBUG(("VGA card detected at IO=%p / mem=%p\n", novaregbase, novamembase));
     }
 }
 
-/* Read and write some registers specific to Mach32. */
-static int detect_mach32(void)
+/* Detect ATI Mach32 and Mach64 */
+static MACH_TYPE detect_mach(void)
 {
-    int result = 0;
+    MACH_TYPE result = MACH_NOT_DETECTED;
 
-    if (VGAREG_W(CONFIG_STATUS_1) != 0xFFFFU)
+    /*
+     * For Mach64 check chip ID.
+     * Only the Mach64 GX is known to exist on ISA cards.
+     */
+    if (VGAREG(M64_CONFIG_CHIP_ID) == M64_GX_CHIP_ID)
     {
-        /* Read two bytes of ATI magic number from BIOS ROM. */
-        /* After power-up, only even bytes are accessible. */
-        if (*(novamembase + 0xC0032UL) == '6' && *(novamembase + 0xC0034UL) == '2')
+        /* Try to read and write Mach64-specific scratch register. */
+        VGAREG(M64_SCRATCH_REG_1) = 0x55U;
+        if (VGAREG(M64_SCRATCH_REG_1) == 0x55U)
         {
-            /* Try to read and write Mach32 specific scratch register. */
-            VGAREG(SCRATCH_PAD_1) = 0x55U;
-            if (VGAREG(SCRATCH_PAD_1) == 0x55U)
-            {
-                result = 1;
-            }
+            result = MACH_64;
+        }
+    }
+    /*
+     * For Mach32 not every revision has a chip ID register.
+     * Instead, check ATI magic number in the BIOS ROM on the card.
+     * After power-up, only even bytes are accessible.
+     */
+    else if (*(novamembase + 0xC0032UL) == '6' && *(novamembase + 0xC0034UL) == '2')
+    {
+        /* Try to read and write Mach32-specific scratch register. */
+        VGAREG(SCRATCH_PAD_1) = 0x55U;
+        if (VGAREG(SCRATCH_PAD_1) == 0x55U)
+        {
+            result = MACH_32;
         }
     }
 
     if (result) {
-        KDEBUG(("detect_mach32() detected ATI Mach32\n"));
+        KDEBUG(("detect_mach() detected an ATI %s\n", (result==MACH_32)?"Mach32":"Mach64"));
     } else {
-        KDEBUG(("detect_mach32() did not detect ATI Mach32\n"));
+        KDEBUG(("detect_mach() did not detect an ATI Mach32/64.\n"));
     }
     return result;
 }
@@ -272,7 +304,7 @@ static void init_mach32(void)
     VGAREG(MEM_BNDRY) = 0x00;
     VGAREG_W(MEM_CFG) = 0x0202;
     VGAREG_W(ROM_ADDR_1) = 0x0040;
-    // VGAREG_W(SCRATCH_PAD_1) = 0x0000;
+    /* VGAREG_W(SCRATCH_PAD_1) = 0x0000; */
     VGAREG(ADVFUNC_CNTL) = 0x03;    /* Go to 8514 mode */
     VGAREG_W(SUBSYS_CNTL) = 0x90;   /* 8514 reset */
     VGAREG_W(SUBSYS_CNTL) = 0x50;
@@ -285,7 +317,7 @@ static void init_mach32(void)
     VGAREG(MISC_CNTL+1) = (VGAREG(R_MISC_CNTL+1) & 0xF0) | 0x0C;
     VGAREG_W(EXT_GE_CONFIG) = 0x1A40; /* DAC 8 bit mode. */
     VGAREG_W(HORZ_OVERSCAN) = 0;
-    //VGAREG(ATI_DAC_R2) = 0xFF     /* DAC mask register. Set later. */
+    /* VGAREG(ATI_DAC_R2) = 0xFF; */   /* DAC mask register. Set later. */
 
     VGAREG_W(CLOCK_SEL) = 0x5002;   /* Back to ATI mode and clock select */
 
@@ -454,7 +486,7 @@ static void init_nova_resolution(int is_mach32)
     if (is_mach32) {
         set_mach32_idxreg();
     } else {   /* ET4000 */
-        set_idxreg(CRTC_I, 0x36, 0x53);
+        set_idxreg(CRTC_I, 0x36, use_16bit_io? 0xD3:0x53);
     }
     set_idxreg(TS_I, 1, vga_TS_1_4[0] | 0x20); /* screen off */
     set_palette_entries(vga_palette);
@@ -463,10 +495,10 @@ static void init_nova_resolution(int is_mach32)
 
 /* Certain ET4000 graphic cards require a different clock divider.
    There is no direct way of finding out the clock the ET4000 runs on.
-   Instead, this function counts the number of VBLs for half a second.
+   Instead, this function counts the number of VBLs for 250 ms.
 */
-#define VBL_TIMEOUT 100 /* 0.5 second */
-#define VBL_LIMIT   30  /* nominally: 70 Hz, i.e. 35 VBLs in 0.5s */
+#define VBL_TIMEOUT 50  /* 0.25 seconds */
+#define VBL_LIMIT   12  /* nominally: 60 Hz, i.e. 15 VBLs in 0.25s */
 static void count_vbls(void)
 {
     LONG end = hz_200 + VBL_TIMEOUT;
@@ -531,12 +563,10 @@ static void init_system_vars(void)
     /* Line A vars */
     /* Number of bitplanes */
     v_planes = 1;
-    /* precalculate shift value to optimize pixel address calculations */
-    v_planes_shift = 3;     /* see shift_offset[] in lineainit.c */
     /* Bytes per scan-line */
     BYTES_LIN = v_lin_wr = 80;
     /* Vertical resolution */
-    V_REZ_VT = 400;
+    V_REZ_VT = 480;
     /* Horizontal resolution */
     V_REZ_HZ = 640;
 }
@@ -553,7 +583,7 @@ int init_nova(void)
         return 0;
 
     /* Detect ATI Mach32 (as opposed to ET4000). */
-    is_mach32 = detect_mach32();
+    is_mach32 = (detect_mach() == MACH_32);
     if (is_mach32) {
         novamembase += 0x0A0000UL;
         init_mach32();
@@ -572,6 +602,10 @@ int init_nova(void)
     }
 
     if (!is_mach32) {   /* ET4000 */
+        if (is_crazydots) {
+            /* Program clock generator to 25.175 MHz pixel clock */
+            VGAREG(CRAZY_DOTS_CLK_SEL) = 0x4;
+        }
         unlock_et4000();
         init_et4000();
     }
@@ -591,6 +625,11 @@ int init_nova(void)
     init_system_vars();
 
     return 1;
+}
+
+UBYTE* get_novamembase(void)
+{
+    return (UBYTE *)novamembase;
 }
 
 #endif /* CONF_WITH_NOVA */

@@ -1,7 +1,7 @@
 /*
  * ikbd.c - Intelligent keyboard routines
  *
- * Copyright (C) 2001-2019 The EmuTOS development team
+ * Copyright (C) 2001-2022 The EmuTOS development team
  *
  * Authors:
  *  LVL   Laurent Vogel
@@ -37,9 +37,8 @@
 #include "delay.h"
 #include "bios.h"
 #include "coldfire.h"
-#ifdef MACHINE_AMIGA
 #include "amiga.h"
-#endif
+#include "lisa.h"
 
 
 /* forward declarations */
@@ -108,7 +107,13 @@ static WORD convert_scancode(UBYTE *scancodeptr);
  * a non-zero value in mouse_packet[0] indicates we are currently
  * in mouse emulation mode.
  */
-UBYTE mouse_packet[3];                  /* passed to mousevec() */
+SBYTE mouse_packet[3];                  /* passed to mousevec() */
+
+/*
+ * the following is a count of the number of arrow keys currently down;
+ * it is used in mouse emulation mode.
+ */
+static WORD kb_arrowkeys;
 
 /*=== Keymaps handling (xbios) =======================================*/
 
@@ -141,50 +146,13 @@ LONG kbshift(WORD flag)
 {
     WORD oldshifty = shifty;
 
-    if (flag != -1)
+    if (flag >= 0)
         shifty = flag;
 
     return oldshifty;
 }
 
 /*=== iorec handling (bios) ==============================================*/
-
-LONG bconstat2(void)
-{
-    if (ikbdiorec.head == ikbdiorec.tail) {
-        return 0;               /* iorec empty */
-    } else {
-        return -1;              /* not empty => input available */
-    }
-}
-
-LONG bconin2(void)
-{
-    WORD old_sr;
-    ULONG value;
-
-    while (!bconstat2()) {
-#if USE_STOP_INSN_TO_FREE_HOST_CPU
-        stop_until_interrupt();
-#endif
-    }
-    /* disable interrupts */
-    old_sr = set_sr(0x2700);
-
-    ikbdiorec.head += 4;
-    if (ikbdiorec.head >= ikbdiorec.size) {
-        ikbdiorec.head = 0;
-    }
-    value = *(ULONG_ALIAS *) (ikbdiorec.buf + ikbdiorec.head);
-
-    /* restore interrupts */
-    set_sr(old_sr);
-
-    if (!(conterm & 8))         /* shift status not wanted? */
-        value &= 0x00ffffffL;   /* true, so clean it out */
-
-    return value;
-}
 
 static void push_ikbdiorec(ULONG value)
 {
@@ -220,8 +188,8 @@ static UBYTE scancode_from_ascii(UBYTE ascii, const UBYTE *table)
     return 0;
 }
 
-/* Emulate a key press from an ASCII character */
-void push_ascii_ikbdiorec(UBYTE ascii)
+/* Guess full KBD record from ASCII character */
+static ULONG ikbdiorec_from_ascii(UBYTE ascii)
 {
     UBYTE scancode = 0;
     UBYTE mode = 0;
@@ -250,48 +218,73 @@ void push_ascii_ikbdiorec(UBYTE ascii)
     value = MAKE_ULONG(scancode, ascii);
     value |= (ULONG)mode << 24;
 
+    return value;
+}
+
+/* Emulate a key press from an ASCII character */
+void push_ascii_ikbdiorec(UBYTE ascii)
+{
+    ULONG value;
+
+    value = ikbdiorec_from_ascii(ascii);
     push_ikbdiorec(value);
 }
 
 #endif /* CONF_SERIAL_CONSOLE */
 
+LONG bconstat2(void)
+{
+#if CONF_SERIAL_CONSOLE_POLLING_MODE
+    /* Poll the serial port */
+    return bconstat(1);
+#else
+    /* Check the IKBD IOREC */
+    if (ikbdiorec.head == ikbdiorec.tail) {
+        return 0;               /* iorec empty */
+    } else {
+        return -1;              /* not empty => input available */
+    }
+#endif
+}
+
+LONG bconin2(void)
+{
+    ULONG value;
+#if CONF_SERIAL_CONSOLE_POLLING_MODE
+    /* Poll the serial port */
+    UBYTE ascii = (UBYTE)bconin(1);
+    value = ikbdiorec_from_ascii(ascii);
+#else
+    /* Check the IKBD IOREC */
+    WORD old_sr;
+
+    while (!bconstat2()) {
+#if USE_STOP_INSN_TO_FREE_HOST_CPU
+        stop_until_interrupt();
+#endif
+    }
+    /* disable interrupts */
+    old_sr = set_sr(0x2700);
+
+    ikbdiorec.head += 4;
+    if (ikbdiorec.head >= ikbdiorec.size) {
+        ikbdiorec.head = 0;
+    }
+    value = *(ULONG_ALIAS *) (ikbdiorec.buf + ikbdiorec.head);
+
+    /* restore interrupts */
+    set_sr(old_sr);
+#endif /* CONF_SERIAL_CONSOLE_POLLING_MODE */
+
+    if (!(conterm & 8))         /* shift status not wanted? */
+        value &= 0x00ffffffL;   /* true, so clean it out */
+
+    return value;
+}
+
 /*
  * emulated mouse support (alt-arrowkey support)
  */
-
-/*
- * is the key related to mouse emulation?
- */
-static BOOL is_mouse_key(WORD key)
-{
-    switch(key) {
-    case KEY_EMULATE_LEFT_BUTTON:
-    case KEY_EMULATE_RIGHT_BUTTON:
-    case KEY_UPARROW:
-    case KEY_DNARROW:
-    case KEY_LTARROW:
-    case KEY_RTARROW:
-    /*
-     * in this context, shift & control keys are also related to mouse
-     * emulation, in that they don't switch into or out of emulation mode
-     */
-    case KEY_LSHIFT:
-    case KEY_RSHIFT:
-    case KEY_CTRL:
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-/*
- * initialise mouse packet
- */
-static void init_mouse_packet(UBYTE *packet)
-{
-    packet[0] = MOUSE_REL_POS_REPORT;
-    packet[1] = packet[2] = 0;
-}
 
 /*
  * check if we should switch into or out of mouse emulation mode
@@ -302,57 +295,52 @@ static void init_mouse_packet(UBYTE *packet)
 static BOOL handle_mouse_mode(WORD newkey)
 {
     SBYTE distance;
+    BOOL button = FALSE;
 
     /*
-     * if we shouldn't be in emulation mode, but we are, send an
-     * appropriate mouse packet and exit
+     * check if we should be in emulation mode or not
      */
-    if (!(shifty&MODE_ALT) || !is_mouse_key(newkey & ~KEY_RELEASED)) {
-        if (mouse_packet[0]) {  /* emulating, need to clean up */
-            init_mouse_packet(mouse_packet);
+    if ((shifty&MODE_ALT) && (kb_arrowkeys > 0))
+    {
+        /* we should be, so ensure that mouse_packet is valid */
+        if (!mouse_packet[0])
+        {
+            KDEBUG(("Entering mouse emulation mode\n"));
+            mouse_packet[0] = MOUSE_REL_POS_REPORT;
+        }
+    } else {
+        if (mouse_packet[0])    /* emulating, need to clean up */
+        {
+            /* we send a packet with all buttons up & no movement */
+            mouse_packet[0] = MOUSE_REL_POS_REPORT;
+            mouse_packet[1] = mouse_packet[2] = 0;
+            KDEBUG(("Sending mouse packet %02x%02x%02x\n",
+                    (UBYTE)mouse_packet[0],(UBYTE)mouse_packet[1],(UBYTE)mouse_packet[2]));
             call_mousevec(mouse_packet);
-            mouse_packet[0] = '\0';
             KDEBUG(("Exiting mouse emulation mode\n"));
+            mouse_packet[0] = 0;
         }
         return FALSE;
     }
 
     /*
-     * we should be, so ensure that mouse_packet is valid
+     * set movement distance according to the Shift key
      */
-    if (!mouse_packet[0]) {
-        KDEBUG(("Entering mouse emulation mode\n"));
-        mouse_packet[0] = MOUSE_REL_POS_REPORT;
-    }
-
-    /*
-     * always reset the x,y distance variables for the next
-     * mouse packet.  this is important when the packet is
-     * an emulated mouse button click.
-     */
-    mouse_packet[1] = mouse_packet[2] = 0;
-
-    /*
-     * set movement distance according to the Shift and Control keys.
-     * note that, for compatibility with Atari TOS, the mouse does
-     * not move while Control is pressed, although the keyboard remains
-     * in mouse emulation mode.
-     */
-    if (shifty&MODE_CTRL)
-        distance = 0;
-    else if (shifty&MODE_SHIFT)
+    if (shifty&MODE_SHIFT)
         distance = 1;
     else distance = 8;
 
     switch(newkey) {
     case KEY_EMULATE_LEFT_BUTTON:
         mouse_packet[0] |= LEFT_BUTTON_DOWN;
+        button = TRUE;
         break;
     case KEY_EMULATE_LEFT_BUTTON | KEY_RELEASED:
         mouse_packet[0] &= ~LEFT_BUTTON_DOWN;
         break;
     case KEY_EMULATE_RIGHT_BUTTON:
         mouse_packet[0] |= RIGHT_BUTTON_DOWN;
+        button = TRUE;
         break;
     case KEY_EMULATE_RIGHT_BUTTON | KEY_RELEASED:
         mouse_packet[0] &= ~RIGHT_BUTTON_DOWN;
@@ -371,10 +359,34 @@ static BOOL handle_mouse_mode(WORD newkey)
         mouse_packet[1] = distance;
         mouse_packet[2] = 0;        /* Atari TOS only allows one direction at a time */
         break;
+    default:        /* user pressed a modifier: update distances */
+        if (mouse_packet[1] < 0)
+            mouse_packet[1] = -distance;
+        else if (mouse_packet[1])
+            mouse_packet[1] = distance;
+        if (mouse_packet[2] < 0)
+            mouse_packet[2] = -distance;
+        else if (mouse_packet[2])
+            mouse_packet[2] = distance;
     }
 
-    KDEBUG(("Sending mouse packet %02x%02x%02x\n",mouse_packet[0],mouse_packet[1],mouse_packet[2]));
-    call_mousevec(mouse_packet);
+    /*
+     * if the packet is for an emulated mouse button press,
+     * reset the x,y distance variables
+     */
+    if (button)
+        mouse_packet[1] = mouse_packet[2] = 0;
+
+    /*
+     * for compatibility with Atari TOS, the mouse does not move while Control
+     * is pressed, although the keyboard remains in mouse emulation mode
+     */
+    if (!(shifty&MODE_CTRL))
+    {
+        KDEBUG(("Sending mouse packet %02x%02x%02x\n",
+                (UBYTE)mouse_packet[0],(UBYTE)mouse_packet[1],(UBYTE)mouse_packet[2]));
+        call_mousevec(mouse_packet);
+    }
 
     return TRUE;
 }
@@ -417,10 +429,11 @@ static union {
     ULONG key;                  /* combined value */
     struct {
         UBYTE shifty;           /* state of 'shifty' */
-        UBYTE scancode;         /* actual scancode */
+        UBYTE scancode;         /* possibly-converted scancode */
         UWORD ascii;            /* derived ascii value */
     } k;
 } kb_last;
+static UBYTE kb_last_actual;    /* actual last scancode */
 static PFVOID kb_last_ikbdsys;  /* ikbdsys when kb_last was set */
 
 WORD kbrate(WORD initial, WORD repeat)
@@ -487,19 +500,27 @@ static void do_key_repeat(void)
      * they change, we must do the scancode conversion again
      */
     if (shifty != kb_last.k.shifty) {
-        UBYTE scancode;
-
-        /* use a copy of scancode because convert_scancode() can change it */
-        scancode = kb_last.k.scancode;
-        kb_last.k.ascii = convert_scancode(&scancode);
+        /* get actual last scancode because convert_scancode() can change it */
+        kb_last.k.scancode = kb_last_actual;
+        kb_last.k.ascii = convert_scancode(&kb_last.k.scancode);
         kb_last.k.shifty = shifty;
         kb_last_ikbdsys = kbdvecs.ikbdsys;
     }
 
-    /* Simulate a key press or a mouse action */
-    if (mouse_packet[0]) {
-        KDEBUG(("Repeating mouse packet %02x%02x%02x\n",mouse_packet[0],mouse_packet[1],mouse_packet[2]));
-        call_mousevec(mouse_packet);
+    /*
+     * Simulate a key press or a mouse action
+     *
+     * for compatibility with Atari TOS, the mouse does not move while Control
+     * is pressed, although the keyboard remains in mouse emulation mode
+     */
+    if (mouse_packet[0])
+    {
+        if (!(shifty&MODE_CTRL))
+        {
+            KDEBUG(("Repeating mouse packet %02x%02x%02x\n",
+                    (UBYTE)mouse_packet[0],(UBYTE)mouse_packet[1],(UBYTE)mouse_packet[2]));
+            call_mousevec(mouse_packet);
+        }
     } else push_ikbdiorec(kb_last.key);
 
     /* The key will repeat again until some key up */
@@ -705,7 +726,7 @@ void kbd_int(UBYTE scancode)
 {
     WORD ascii = 0;
     UBYTE scancode_only = scancode & ~KEY_RELEASED;  /* get rid of release bits */
-    BOOL modifier;
+    BOOL modifier, arrowkey = FALSE;
 
     KDEBUG(("================\n"));
     KDEBUG(("Key-scancode: 0x%02x, key-shift bits: 0x%02x\n", scancode, shifty));
@@ -739,6 +760,20 @@ void kbd_int(UBYTE scancode)
     }
 #endif
 
+    /*
+     * check for possible mouse emulation key
+     */
+    switch(scancode_only) {
+    case KEY_UPARROW:
+    case KEY_DNARROW:
+    case KEY_LTARROW:
+    case KEY_RTARROW:
+    case KEY_EMULATE_LEFT_BUTTON:
+    case KEY_EMULATE_RIGHT_BUTTON:
+        arrowkey = TRUE;
+        break;
+    }
+
     if (scancode & KEY_RELEASED) {
         switch (scancode_only) {
         case KEY_RSHIFT:
@@ -752,6 +787,8 @@ void kbd_int(UBYTE scancode)
             break;
         case KEY_ALT:
             shifty &= ~MODE_ALT;        /* clear bit */
+            if (mouse_packet[0])
+                kb_ticks = 0;           /* stop key repeat */
             if (kb_altnum >= 0) {
                 ascii = LOBYTE(kb_altnum);
                 kb_altnum = -1;
@@ -776,8 +813,11 @@ void kbd_int(UBYTE scancode)
             kb_ticks = 0;               /* stop key repeat */
             break;
         default:                    /* non-modifier keys: */
-            kb_ticks = 0;               /*  stop key repeat */
+            if (scancode_only == kb_last_actual)    /* key-up matches last key-down: */
+                kb_ticks = 0;                       /*  stop key repeat */
         }
+        if (arrowkey && (kb_arrowkeys > 0))
+            kb_arrowkeys--;
         handle_mouse_mode(scancode);    /* exit mouse mode if appropriate */
         return;
     }
@@ -785,6 +825,8 @@ void kbd_int(UBYTE scancode)
     /*
      * a key has been pressed
      */
+    if (arrowkey)
+        kb_arrowkeys++;
     modifier = TRUE;
     switch (scancode) {
     case KEY_RSHIFT:
@@ -830,6 +872,7 @@ void kbd_int(UBYTE scancode)
     /*
      * a non-modifier key has been pressed
      */
+    kb_last_actual = scancode;  /* save because 'scancode' may get changed */
     if (shifty & MODE_ALT) {    /* only if the Alt key is down ... */
         switch(scancode) {
         case KEY_HOME:
@@ -920,7 +963,7 @@ void ikbd_writeb(UBYTE b)
     ikbd_acia.data = b;
 #elif CONF_WITH_FLEXCAN
     coldfire_flexcan_ikbd_writeb(b);
-#elif defined (MACHINE_AMIGA)
+#elif defined(MACHINE_AMIGA)
     amiga_ikbd_writeb(b);
 #endif
 }
@@ -1018,14 +1061,6 @@ static void ikbd_reset(void)
 
 void kbd_init(void)
 {
-#if CONF_SERIAL_CONSOLE
-# ifdef __mcoldfire__
-    coldfire_rs232_enable_interrupt();
-# else
-    /* FIXME: Enable interrupts on other hardware. */
-# endif
-#endif /* CONF_SERIAL_CONSOLE */
-
 #if CONF_WITH_IKBD_ACIA
     /* initialize ikbd ACIA */
     ikbd_acia.ctrl = ACIA_RESET;        /* master reset */
@@ -1045,6 +1080,10 @@ void kbd_init(void)
     amiga_kbd_init();
 #endif
 
+#ifdef MACHINE_LISA
+    lisa_kbd_init();
+#endif
+
     /* initialize the IKBD */
     ikbd_reset();
 
@@ -1053,6 +1092,7 @@ void kbd_init(void)
     kb_initial = KB_INITIAL;
     kb_repeat = KB_REPEAT;
 
+    kb_arrowkeys = 0;  /* no arrow keys pressed initially */
     kb_dead = -1;      /* not in a dead key sequence */
     kb_altnum = -1;    /* not in an alt-numeric sequence */
     kb_switched = 0;   /* not switched initially */

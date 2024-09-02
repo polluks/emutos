@@ -3,7 +3,7 @@
  *
  * Copyright 1982 by Digital Research Inc.  All rights reserved.
  * Copyright 1999 by Caldera, Inc. and Authors:
- * Copyright 2002-2019 by The EmuTOS development team
+ * Copyright 2002-2022 by The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -11,20 +11,24 @@
 
 #include "emutos.h"
 #include "asm.h"
+#include "intmath.h"
 #include "biosbind.h"
 #include "xbiosbind.h"
 #include "obdefs.h"
-#include "gsxdefs.h"
+#include "aesdefs.h"
 #include "aesext.h"
 #include "vdi_defs.h"
 #include "vdistub.h"
 #include "tosvars.h"
 #include "biosext.h"
 #include "lineavars.h"
+#include "vdi_inline.h"
 #if WITH_AES
 #include "../aes/aesstub.h"
 #endif
 
+#define MOUSE_WIDTH     16      /* in pixels */
+#define MOUSE_HEIGHT    16
 
 /* Mouse / sprite structure */
 typedef struct Mcdb_ Mcdb;
@@ -37,7 +41,7 @@ struct Mcdb_ {
         UWORD   maskdata[32];   /* mask & data are interleaved */
 };
 
-/* mouse related linea variables in bios/lineavars.S */
+/* mouse related line-A variables in bios/lineavars.S */
 extern void     (*user_but)(void);      /* user button vector */
 extern void     (*user_cur)(void);      /* user cursor vector */
 extern void     (*user_mot)(void);      /* user motion vector */
@@ -107,6 +111,7 @@ static const MFORM arrow_mform = {
 #endif
 
 
+
 /*
  * dis_cur - Displays the mouse cursor if the number of hide
  *           operations has gone back to 0.
@@ -121,16 +126,18 @@ static const MFORM arrow_mform = {
  */
 static void dis_cur(void)
 {
-    mouse_flag += 1;            /* disable mouse redrawing */
-    HIDE_CNT -= 1;              /* decrement hide operations counter */
-    if (HIDE_CNT == 0) {
-        cur_display(&mouse_cdb, mcs_ptr, GCURX, GCURY);  /* display the cursor */
-        draw_flag = 0;          /* disable VBL drawing routine */
+    if (HIDE_CNT != 1)      /* if not about to be shown: */
+    {
+        HIDE_CNT--;             /* just decrement hide count */
+        if (HIDE_CNT < 0)       /* but make sure it doesn't go negative! */
+            HIDE_CNT = 0;
+        return;
     }
-    else if (HIDE_CNT < 0) {
-        HIDE_CNT = 0;           /* hide counter should not become negative */
-    }
-    mouse_flag -= 1;            /* re-enable mouse drawing */
+
+    /* HIDE_CNT is precisely 1 at this point */
+    cur_display(&mouse_cdb, mcs_ptr, GCURX, GCURY);  /* display the cursor */
+    draw_flag = 0;              /* disable VBL drawing routine */
+    HIDE_CNT--;
 }
 
 
@@ -149,8 +156,6 @@ static void dis_cur(void)
  */
 static void hide_cur(void)
 {
-    mouse_flag += 1;            /* disable mouse redrawing */
-
     /*
      * Increment the counter for the number of hide operations performed.
      * If this is the first one then remove the cursor from the screen.
@@ -161,8 +166,6 @@ static void hide_cur(void)
         cur_replace(mcs_ptr);   /* remove the cursor from screen */
         draw_flag = 0;          /* disable VBL drawing routine */
     }
-
-    mouse_flag -= 1;            /* re-enable mouse drawing */
 }
 
 
@@ -246,7 +249,7 @@ static WORD gloc_key(void)
  *    positions are the current positions, and the terminating character
  *    is the ASCII key pressed, or 0x20 for the left mouse button / 0x21
  *    for the right.
- *    As a consequence, pressing the space key twice is indistingishable
+ *    As a consequence, pressing the space key twice is indistinguishable
  *    from pressing/releasing the left mouse button, and likewise for
  *    the exclamation mark and the right mouse button.
  *
@@ -262,7 +265,7 @@ static WORD gloc_key(void)
  *    . if a mouse button is pressed or released, the terminating
  *      character is 0x20 for the left button, 0x21 for the right
  *      button, and CONTRL[4] is set to 1
- *    . the output mouse psitions are always set to the same as the
+ *    . the output mouse positions are always set to the same as the
  *      input
  *
  * Differences from official Atari documentation
@@ -337,13 +340,15 @@ void vdi_v_hide_c(Vwk * vwk)
  */
 void vdi_vq_mouse(Vwk * vwk)
 {
+    WORD old_sr;
+
+    old_sr = set_sr(0x2700);    /* disable interrupts */
+
     INTOUT[0] = MOUSE_BT;
-
-    CONTRL[4] = 1;
-    CONTRL[2] = 1;
-
     PTSOUT[0] = GCURX;
     PTSOUT[1] = GCURY;
+
+    set_sr(old_sr);             /* enable interrupts */
 }
 
 
@@ -648,7 +653,8 @@ void vdimouse_exit(void)
  *         draw_flag - signals need to redraw cursor
  *         newx - new cursor x-coordinate
  *         newy - new cursor y-coordinate
- *         mouse_flag - cursor hide/show flag
+ *         mouse_flag - mouse cursor is being modified
+ *         HIDE_CNT - mouse cursor hide/show indicator
  *
  *      Outputs:
  *         draw_flag is cleared
@@ -661,18 +667,107 @@ void vdimouse_exit(void)
 
 static void vb_draw(void)
 {
-    WORD old_sr = set_sr(0x2700);       /* disable interrupts */
+    WORD old_sr, x, y;
+
+    /* if the cursor is being modified, or is hidden, just exit */
+    if (mouse_flag || HIDE_CNT)
+        return;
+
+    old_sr = set_sr(0x2700);        /* disable interrupts */
     if (draw_flag) {
         draw_flag = FALSE;
+        x = newx;                   /* get x/y for cur_display() atomically */
+        y = newy;
         set_sr(old_sr);
-        if (!mouse_flag) {
-            cur_replace(mcs_ptr);       /* remove the old cursor from the screen */
-            cur_display(&mouse_cdb, mcs_ptr, newx, newy);  /* display the cursor */
-        }
+        cur_replace(mcs_ptr);       /* remove the old cursor from the screen */
+        cur_display(&mouse_cdb, mcs_ptr, x, y); /* display the cursor */
     } else
         set_sr(old_sr);
-
 }
+
+
+
+#if CONF_WITH_VDI_16BIT
+/*
+ * cur_display16() - blits mouse "cursor" to 16-bit screen
+ *
+ * see cur_display() for more info
+ */
+static void cur_display16(Mcdb *sprite, MCS *mcs, WORD x, WORD y)
+{
+    UWORD *mask_start, *dst, *save, *palette;
+    UWORD bgcol, fgcol, bgmask, fgmask;
+    WORD dst_inc, i, rows, shift, width;
+
+    /*
+     * get adjusted coordinates of mouse destination
+     */
+    x -= sprite->xhot;
+    y -= sprite->yhot;
+
+    /*
+     * figure out height, width, and where to start in mask
+     */
+    mask_start = sprite->maskdata;
+    if (y < 0) {
+        rows = y + MOUSE_HEIGHT;
+        mask_start -= y * sizeof(UWORD);
+        y = 0;
+    } else if (y > (yres + 1 - MOUSE_HEIGHT)) {
+        rows = yres + 1 - y;
+    } else {
+        rows = MOUSE_HEIGHT;
+    }
+
+    shift = 0;
+    if (x < 0) {
+        width = x + MOUSE_WIDTH;
+        shift = -x;
+        x = 0;
+    } else if (x > (xres + 1 - MOUSE_WIDTH)) {
+        width = xres + 1 - x;
+    } else {
+        width = MOUSE_WIDTH;
+    }
+
+    /*
+     * get destination pointer & increment
+     */
+    dst = get_start_addr16(x, y);
+    dst_inc = v_lin_wr/sizeof(UWORD) - width;
+
+    save = (UWORD *)mcs->area;
+
+    /*
+     *  Store values required by cur_replace()
+     */
+    mcs->len = rows;            /* number of cursor rows */
+    mcs->addr = dst;            /* save area: origin of material */
+    mcs->stat |= MCS_VALID;     /* flag the buffer as being loaded */
+    mcs->width = width;         /* number of cursor columns */
+
+    /*
+     * update screen, saving old contents
+     */
+    palette = CUR_WORK->ext->palette;
+    bgcol = palette[sprite->bg_col];
+    fgcol = palette[sprite->fg_col];
+    while (rows-- > 0) {
+        bgmask = *mask_start++;     /* set up bg mask */
+        bgmask <<= shift;
+        fgmask = *mask_start++;     /* set up fg mask */
+        fgmask <<= shift;
+        for (i = 0; i < width; i++, dst++, bgmask<<=1, fgmask<<=1) {
+            *save++ = *dst;
+            if (fgmask & 0x8000)
+                *dst = fgcol;
+            else if (bgmask & 0x8000)
+                *dst = bgcol;
+        }
+        dst += dst_inc;
+    }
+}
+#endif
 
 
 
@@ -761,6 +856,8 @@ static void cur_display_clip(WORD op,Mcdb *sprite,MCS *mcs,UWORD *mask_start,UWO
     } /* loop through planes */
 }
 
+
+
 /*
  * cur_display() - blits a "cursor" to the destination
  *
@@ -784,6 +881,16 @@ void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
     UWORD shft, cdb_fg, cdb_bg;
     UWORD cdb_mask;             /* for checking cdb_bg/cdb_fg */
     ULONG *save;
+
+#if CONF_WITH_VDI_16BIT
+    /*
+     * handle 16-bit VDI in separate function
+     */
+    if (TRUECOLOR_MODE) {
+        cur_display16(sprite, mcs, x, y);
+        return;
+    }
+#endif
 
     x -= sprite->xhot;          /* x = left side of destination block */
     y -= sprite->yhot;          /* y = top of destination block */
@@ -915,6 +1022,36 @@ void cur_display (Mcdb *sprite, MCS *mcs, WORD x, WORD y)
 }
 
 
+
+#if CONF_WITH_VDI_16BIT
+/*
+ * cur_replace16 - replace cursor with saved data (for 16-bit screens)
+ *
+ * see cur_replace for more details
+ */
+static void cur_replace16(MCS *mcs)
+{
+    UWORD *addr, *dst, *src;
+    UWORD row, col;
+
+    if (!(mcs->stat & MCS_VALID))   /* does save area contain valid data ? */
+        return;
+    mcs->stat &= ~MCS_VALID;        /* yes but (like TOS) don't allow reuse */
+
+    addr = mcs->addr;               /* starting screen address */
+    src = (UWORD *)mcs->area;
+
+    for (row = mcs->len, dst = addr; row > 0; row--, dst = addr) {
+        for (col = mcs->width; col > 0; col--) {
+            *dst++ = *src++;
+        }
+        addr += v_lin_wr >> 1;
+    }
+}
+#endif
+
+
+
 /*
  * cur_replace - replace cursor with data in save area
  *
@@ -932,6 +1069,16 @@ void cur_replace (MCS *mcs)
     UWORD *addr, *src, *dst;
     const WORD inc = v_planes;      /* # words to next word in same plane */
     const WORD dst_inc = v_lin_wr >> 1; /* # words in a scan line */
+
+#if CONF_WITH_VDI_16BIT
+    /*
+     * handle 16-bit VDI in separate function
+     */
+    if (TRUECOLOR_MODE) {
+        cur_replace16(mcs);
+        return;
+    }
+#endif
 
     if (!(mcs->stat & MCS_VALID))   /* does save area contain valid data ? */
         return;

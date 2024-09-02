@@ -2,7 +2,7 @@
  * fsdir.c - directory routines for the file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2019 The EmuTOS development team
+ *               2002-2024 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -132,7 +132,11 @@
 #include "string.h"
 #include "bdosstub.h"
 
+#include "miscutil.h"
+
 #define ROOT_PSEUDO_CLUSTER 1   /* see comments in xrename() */
+
+#define DIR_FILE_LENGTH 0x7fffffffL     /* fake size for directories */
 
 /*
  * forward prototypes
@@ -141,7 +145,7 @@ static int namlen(char *s11);
 static char *packit(char *s, char *d);
 static void unpackit(const char *src, char *dst);
 static char *dopath(DND *p, char *buf, int *len);
-static DND *makdnd(DND *p, FCB *b);
+static DND *makdnd(DND *p, FCB *fcb);
 static DND *dcrack(const char **np);
 static int getpath(const char *p, char *d, int dirspec);
 static BOOL match(char *s1, char *s2);
@@ -169,18 +173,18 @@ static LONG freed_dnds, freed_ofds; /* count of DNDs & OFDs made available */
 
 
 /*
- *  namlen - parameter points to a character string of 11 bytes max
+ *  namlen - parameter points to a character string of FNAMELEN bytes max
  */
 static int namlen(char *s11)                            /* M01.01.1107.01 */
 {
     int i, len;
 
-    for (i = len = 1; i <= 11; i++, s11++)
+    for (i = len = 1; i <= FNAMELEN; i++, s11++)
     {
         if (*s11 && (*s11 != ' '))
         {
             len++;
-            if (i == 9)
+            if (i == FNAMELEN-2)
                 len++;
         }
     }
@@ -197,9 +201,9 @@ static int namlen(char *s11)                            /* M01.01.1107.01 */
 long xmkdir(char *s)
 {
     OFD *f;
-    FCB *f2;
     OFD *fd,*f0;
-    FCB *b;
+    DFD *dfd;
+    FCB *fcb1,*fcb2;
     DND *dn;
     int h,cl,plen;
     long rc;
@@ -213,63 +217,65 @@ long xmkdir(char *s)
     fd = f->o_dirfil;
 
     ixlseek(fd,f->o_dirbyt);
-    b = (FCB *) ixread(fd,32L,NULL);
+    fcb1 = ixgetfcb(fd);
 
     /* is the total path length too long? */    /* M01.01.1107.01 */
-    plen = namlen( b->f_name );
+    plen = namlen(fcb1->f_name);
     for (dn = f->o_dnode; dn; dn = dn->d_parent)
         plen += namlen(dn->d_name);
     if (plen >= (LEN_ZPATH-3))
     {
-        ixdel(f->o_dnode, b, f->o_dirbyt);
+        ixdel(f->o_dnode, fcb1, f->o_dirbyt);
         return EACCDN;
     }
 
     /* note: makdnd() and makofd() only return if they succeed */
-    dn = makdnd(f->o_dnode,b);
+    dn = makdnd(f->o_dnode, fcb1);
     f0 = makofd(dn);            /* makofd() also updates dn->d_ofd */
 
     /* initialize dir cluster */
     if (nextcl(f0,1))
     {
-        ixdel(f->o_dnode, b, f->o_dirbyt);      /* M01.01.1103.01 */
+        ixdel(f->o_dnode, fcb1, f->o_dirbyt);   /* M01.01.1103.01 */
         f->o_dnode->d_left = NULL;              /* M01.01.1103.01 */
         freednd(dn);                            /* M01.01.1031.02 */
         return EACCDN;
     }
 
-    f2 = dirinit(dn);                   /* pointer to dirty dir block */
+    fcb2 = dirinit(dn);             /* pointer to dirty dir block */
 
     /* write identifier */
-    memcpy(f2, dots, 22);
-    f2->f_attrib = FA_SUBDIR;
-    f2->f_td = f0->o_td;            /* time/date are little-endian */
-    cl = f0->o_strtcl;
+    memcpy(fcb2, dots, 22);
+    fcb2->f_attrib = FA_SUBDIR;
+    dfd = f0->o_dfd;
+    fcb2->f_td = dfd->o_td;         /* time/date are little-endian */
+    cl = dfd->o_strtcl;
     swpw(cl);
-    f2->f_clust = cl;
-    f2->f_fileln = 0;
-    f2++;
+    fcb2->f_clust = cl;
+    fcb2->f_fileln = 0;
+    fcb2++;
 
     /* write parent entry .. */
-    memcpy(f2, dots, 22);
-    f2->f_name[1] = '.';           /* This is .. */
-    f2->f_attrib = FA_SUBDIR;
+    memcpy(fcb2, dots, 22);
+    fcb2->f_name[1] = '.';          /* This is .. */
+    fcb2->f_attrib = FA_SUBDIR;
     /* if creating a folder in the root, the parent entry needs special handling */
     if (!fd->o_dnode)
     {
-        f2->f_td.time = 0;          /* time/date of parent must be zero */
-        f2->f_td.date = 0;
-        f2->f_clust = 0;            /* cluster number is zero too */
+        fcb2->f_td.time = 0;        /* time/date of parent must be zero */
+        fcb2->f_td.date = 0;
+        fcb2->f_clust = 0;          /* cluster number is zero too */
     }
     else
     {
-        f2->f_td = f->o_dirfil->o_td;   /* time/date are little-endian */
-        f2->f_clust = f->o_dirfil->o_strtcl;
-        swpw(f2->f_clust);
+        dfd = f->o_dirfil->o_dfd;
+        fcb2->f_td = dfd->o_td;     /* time/date are little-endian */
+        fcb2->f_clust = dfd->o_strtcl;
+        swpw(fcb2->f_clust);
     }
-    f2->f_fileln = 0;
+    fcb2->f_fileln = 0;
     memcpy(f, f0, sizeof(OFD));
-    f->o_flag |= O_DIRTY;
+    f->o_disk.o_flag |= O_DIRTY;    /* must set flag in f, not f0! */
     ixclose(f,CL_DIR | CL_FULL);    /* force flush and write */
     xmfreblk(f);
     sft[h-NUMSTD].f_own = 0;
@@ -292,13 +298,12 @@ long xrmdir(char *p)
 {
     DND *d;
     DND *d1,**q;
-    FCB *f;
+    FCB *fcb;
     OFD *fd,*f2;                    /* M01.01.03 */
     long pos;
     const char *s;
 
-    if ((long)(d = findit(p,&s,1)) < 0)     /* M01.01.1212.01 */
-        return (long)d;
+    d = findit(p,&s,1);
     if (!d)                                 /* M01.01.1214.01 */
         return EPTHNF;
 
@@ -313,14 +318,14 @@ long xrmdir(char *p)
     if (!(fd = d->d_ofd))
         fd = makofd(d);             /* makofd() also updates d->d_ofd */
 
-    ixlseek(fd,0x40L);              /* skip over . and .. */
+    ixlseek(fd,2*sizeof(FCB));      /* skip over . and .. */
     do
     {
-        if (!(f = (FCB *) ixread(fd,32L,NULL)))
+        if (!(fcb = ixgetfcb(fd)))
             break;
-    } while ((f->f_name[0] == ERASE_MARKER) || (f->f_attrib == FA_LFN));
+    } while ((fcb->f_name[0] == ERASE_MARKER) || (fcb->f_attrib == FA_LFN));
 
-    if ((f != (FCB *)NULL) && (f->f_name[0] != 0x00))
+    if ((fcb != NULL) && (fcb->f_name[0] != 0x00))
         return EACCDN;
 
     /*
@@ -367,9 +372,9 @@ long xrmdir(char *p)
      * finally, we delete the entry from the parent directory
      */
     ixlseek((f2 = fd->o_dirfil),(pos = fd->o_dirbyt));
-    f = (FCB *)ixread(f2,32L,NULL);
+    fcb = ixgetfcb(f2);
 
-    return ixdel(d1,f,pos);
+    return ixdel(d1, fcb, pos);
 }
 
 
@@ -382,6 +387,17 @@ long xrmdir(char *p)
  *  Error returns:
  *                  EPTHNF
  *                  EFILNF
+ *
+ *  Some notes on the Fattrib() implementation in Atari TOS and EmuTOS
+ *  ------------------------------------------------------------------
+ *  In TOS versions prior to TOS4, Fattrib() only works with files, not
+ *  folders: trying to get or set the attributes of a folder always
+ *  returns EFILNF.  In TOS4, this restriction is lifted and you may
+ *  use Fattrib() to get/set attributes for both files and folders.
+ *  The only restrictions in TOS4 Fattrib() are on changing attributes:
+ *    (1) you may not change a file to a folder or vice-versa
+ *    (2) you may not set the Volume Label bit on a folder.
+ *  At this time, EmuTOS behaves like Atari TOS 1-3.
  */
 long xchmod(char *p, int wrt, UBYTE mod)
 {
@@ -390,9 +406,8 @@ long xchmod(char *p, int wrt, UBYTE mod)
     const char *s;
     long pos;
 
-    if ((long)(dn = findit(p,&s,0)) < 0)    /* M01.01.1212.01 */
-        return (long)dn;
-    if (!(long)dn)                          /* M01.01.1214.01 */
+    dn = findit(p,&s,0);
+    if (!dn)                                /* M01.01.1214.01 */
         return EPTHNF;
 
     pos = 0;
@@ -438,14 +453,13 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
 {
     const char *s;              /*  M01.01.03                   */
     DND *dn;
-    FCB *f;
+    FCB *fcb;
     long pos;
 
     if (att != FA_VOL)
         att |= (FA_ARCHIVE|FA_RO);
 
-    if ((long)(dn = findit(name,&s,0)) < 0) /* M01.01.1212.01 */
-        return (long)dn;
+    dn = findit(name,&s,0);
     if (!dn)
         return EPTHNF;
 
@@ -453,13 +467,13 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
 
     pos = 0;
 
-    if ((f = scan(dn,s,att,&pos)) == (FCB*)NULL)
+    if ((fcb = scan(dn,s,att,&pos)) == NULL)
         return EFILNF;
 
     if (addr)
     {
         OFD *ofd = dn->d_ofd;
-        memcpy(addr->dt_name, s, 12);
+        memcpy(addr->dt_name, s, FNAMELEN+1);   /* filename + attr */
         if (!ofd->o_dnode)              /* i.e. root directory */
         {
             addr->dt_offset_drive = pos;
@@ -478,7 +492,7 @@ long ixsfirst(char *name, WORD att, DTAINFO *addr)
         KDEBUG(("ixsfirst(%s,0x%02x,%p): DTA pvt=%08lx/%04x/%04x\n",
                 name,att,addr,addr->dt_offset_drive,addr->dt_cloffset,addr->dt_clnum));
 
-        makbuf(f, addr);
+        makbuf(fcb, addr);
     }
 
     return E_OK;
@@ -530,7 +544,7 @@ long xsfirst(char *name, int att)
  */
 static FCB *ixsnext(DTAINFO *dt)
 {
-    char name[12];
+    char name[FNAMELEN+1];
     UBYTE *buf, *bufend;
     DMD *dmd;
     BCB *bcb;
@@ -544,7 +558,7 @@ static FCB *ixsnext(DTAINFO *dt)
         return NULL;
 
     builds(dt->dt_name,name);   /* build FCB-style name */
-    name[11] = dt->dt_attr;
+    name[FNAMELEN] = dt->dt_attr;
 
     dmd = drvtbl[drive];
 
@@ -639,7 +653,7 @@ static FCB *ixsnext(DTAINFO *dt)
  */
 long xsnext(void)
 {
-    FCB *f;
+    FCB *fcb;
     DTAINFO *dt;
 
     dt = (DTAINFO *)run->p_xdta;            /* M01.01.1209.01 */
@@ -648,15 +662,15 @@ long xsnext(void)
     if (dt->dt_offset_drive < 0L)
         return ENMFIL;
 
-    f = ixsnext(dt);
+    fcb = ixsnext(dt);
 
-    if (f == NULL)                          /* end of directory */
+    if (fcb == NULL)                        /* end of directory */
     {
         dt->dt_offset_drive = -1L;
         return ENMFIL;
     }
 
-    makbuf(f,(DTAINFO *)run->p_xdta);
+    makbuf(fcb,(DTAINFO *)run->p_xdta);
 
     return E_OK;
 }
@@ -670,20 +684,23 @@ long xsnext(void)
 long xgsdtof(DOSTIME *buf, int h, int wrt)
 {
     OFD *f = getofd(h);
+    DFD *dfd;
 
     if (!f)
         return EIHNDL;
 
+    dfd = f->o_dfd;
+
     if (wrt)
     {
-        swpcopyw(&buf->time, &f->o_td.time);
-        swpcopyw(&buf->date, &f->o_td.date);
-        f->o_flag |= O_DIRTY;           /* M01.01.0918.01 */
+        swpcopyw(&buf->time, &dfd->o_td.time);
+        swpcopyw(&buf->date, &dfd->o_td.date);
+        dfd->o_flag |= O_DIRTY;         /* M01.01.0918.01 */
     }
     else
     {
-        swpcopyw(&f->o_td.time, &buf->time);
-        swpcopyw(&f->o_td.date, &buf->date);
+        swpcopyw(&dfd->o_td.time, &buf->time);
+        swpcopyw(&dfd->o_td.date, &buf->date);
     }
 
     return E_OK;
@@ -693,7 +710,7 @@ long xgsdtof(DOSTIME *buf, int h, int wrt)
 #define NEWCODE
 #ifdef  NEWCODE
 /*  M01.01.03  */
-#define isnotdelim(x)   ((x) && (x!='*') && (x!=SLASH) && (x!='.') && (x!=' '))
+#define isnotdelim(x)   ((x) && (x!='*') && (x!=PATHSEP) && (x!='.') && (x!=' '))
 
 /*
  *  builds - build a directory style file spec from a portion of a path name
@@ -703,14 +720,14 @@ long xgsdtof(DOSTIME *buf, int h, int wrt)
  *      into the form 'ffffffffeee' where 'ffffffff' is a non-terminated
  *      string of characters, padded on the right, specifying the filename
  *      portion of the file spec.  (The file spec terminates with the first
- *      occurrence of a SLASH or NULL, the filename portion of the file spec
- *      terminates with SLASH, NULL, PERIOD or WILDCARD-CHAR).  'eee' is the
+ *      occurrence of a PATHSEP or NULL, the filename portion of the file spec
+ *      terminates with PATHSEP, NULL, PERIOD or WILDCARD-CHAR).  'eee' is the
  *      file extension portion of the file spec, and is terminated with
  *      any of the above.  The file extension portion is left justified into
  *      the last three characters of the destination (11 char) buffer, but is
  *      padded on the right.  The padding character depends on whether or not
  *      the filename or file extension was terminated with a separator
- *      (NULL, SLASH, PERIOD) or a WILDCARD-CHAR.
+ *      (NULL, PATHSEP, PERIOD) or a WILDCARD-CHAR.
  *
  */
 
@@ -736,7 +753,7 @@ void builds(const char *s1, char *s2)
      */
 
     if (i == LEN_ZNODE)
-        while (*s1 && (*s1 != '.') && (*s1 != SLASH))
+        while (*s1 && (*s1 != '.') && (*s1 != PATHSEP))
             s1++;
 
     /*
@@ -792,12 +809,12 @@ void builds(const char *s1, char *s2)
     int i;
     char c;
 
-    for (i = 0; (i < 8) && (*s1) && (*s1 != '*') && (*s1 != SLASH) &&
+    for (i = 0; (i < LEN_ZNODE) && (*s1) && (*s1 != '*') && (*s1 != PATHSEP) &&
             (*s1 != '.') && (*s1 != ' '); i++)
         *s2++ = toupper(*s1++);
 
-    if (i == 8)
-        while (*s1 && (*s1 != '.') && (*s1 != SLASH))
+    if (i == LEN_ZNODE)
+        while (*s1 && (*s1 != '.') && (*s1 != PATHSEP))
             s1++;
 
     c = (*s1 == '*') ? '?' : ' ';
@@ -808,16 +825,16 @@ void builds(const char *s1, char *s2)
     if (*s1 == '.')
         s1++;
 
-    for ( ; i < 8; i++)
+    for ( ; i < LEN_ZNODE; i++)
         *s2++ = c;
 
-    for (i = 0; (i < 3) && (*s1) && (*s1 != '*') && (*s1 != SLASH) &&
+    for (i = 0; (i < LEN_ZEXT) && (*s1) && (*s1 != '*') && (*s1 != PATHSEP) &&
             (*s1 != '.') && (*s1 != ' '); i++)
         *s2++ = toupper(*s1++);
 
     c = (*s1 == '*') ? '?' : ' ';
 
-    for ( ; i < 3; i++)
+    for ( ; i < LEN_ZEXT; i++)
         *s2++ = c;
 }
 
@@ -878,12 +895,13 @@ static WORD update_fcb(OFD *fd, LONG posp, LONG len, UBYTE *buf)
 long xrename(int n, char *p1, char *p2)
 {
     OFD *fd;
-    FCB *f;
+    DFD *dfd;
+    FCB *fcb;
     DND *dn1, *dn2;
     DMD *dmd1, *dmd2;
     CLNO strtcl1, strtcl2, temp;
     const char *s1, *s2;
-    char buf[11];
+    char buf[FNAMELEN];
     UBYTE att;
     int hnew;
     long posp;
@@ -894,8 +912,7 @@ long xrename(int n, char *p1, char *p2)
     if (!ixsfirst(p2,FA_SUBDIR,(DTAINFO *)0L))       /* check if new path exists */
         return EACCDN;
 
-    if ((long)(dn1 = findit(p1,&s1,0)) < 0)          /* M01.01.1212.01 */
-        return (long)dn1;
+    dn1 = findit(p1,&s1,0);
     if (!dn1)                                        /* M01.01.1214.01 */
         return EPTHNF;
 
@@ -916,33 +933,33 @@ long xrename(int n, char *p1, char *p2)
      * not be renamed via Frename()
      */
     posp = 0L;
-    f = scan(dn1,s1,FA_NORM|FA_SUBDIR,&posp);
-    if (!f)                     /* old path doesn't exist */
+    fcb = scan(dn1,s1,FA_NORM|FA_SUBDIR,&posp);
+    if (!fcb)                   /* old path doesn't exist */
         return EFILNF;
 
     /*
      * renames are forbidden for Read-Only files
      */
-    if (f->f_attrib & FA_RO)
+    if (fcb->f_attrib & FA_RO)
         return EACCDN;
 
     /* at this point:
-     *   f -> FCB for old path
+     *   fcb -> FCB for old path
      *   dn1->d_ofd -> OFD for the directory containing the old path
      *   posp = offset of FCB from start of directory in bytes, plus 32
      */
     fd = dn1->d_ofd;
-    posp -= 32;                 /* adjust to start of FCB */
+    posp -= sizeof(FCB);        /* adjust to start of FCB */
 
     /* get old attribute & time/date/cluster/length */
-    att = f->f_attrib;
-    filetime = f->f_td.time;
+    att = fcb->f_attrib;
+    filetime = fcb->f_td.time;
     swpw(filetime);             /* convert from little-endian format */
-    filedate = f->f_td.date;
+    filedate = fcb->f_td.date;
     swpw(filedate);
-    clust = f->f_clust;
+    clust = fcb->f_clust;
     swpw(clust);
-    fileln = f->f_fileln;
+    fileln = fcb->f_fileln;
     swpl(fileln);
 
     /*
@@ -955,8 +972,6 @@ long xrename(int n, char *p1, char *p2)
     dn2 = findit(p2,&s2,0);
     dn1->d_flag &= ~DND_LOCKED;
 
-    if ((long)dn2 < 0)
-        return (long)dn2;
     if (!dn2)                                        /* M01.01.1214.01 */
         return EPTHNF;
 
@@ -1012,10 +1027,12 @@ long xrename(int n, char *p1, char *p2)
         }
 
         /* copy the time/date/cluster/length to the OFD */
-        swpcopyw(&filetime,&fd2->o_td.time);    /* must be little-endian! */
-        swpcopyw(&filedate,&fd2->o_td.date);
-        fd2->o_strtcl = clust;
-        fd2->o_fileln = fileln;
+        dfd = fd2->o_dfd;
+        swpcopyw(&filetime,&dfd->o_td.time);    /* must be little-endian! */
+        swpcopyw(&filedate,&dfd->o_td.date);
+        dfd->o_strtcl = clust;
+        dfd->o_fileln = fileln;
+        dfd->o_usecnt++;
 
         /* if this is really a folder we're moving, we need to
          * do two things: fix up the parent directory pointer in
@@ -1024,29 +1041,29 @@ long xrename(int n, char *p1, char *p2)
          */
         fdparent = fd2->o_dirfil;           /* parent's OFD */
         if (att&FA_SUBDIR) {
-            fd2->o_fileln = 0x7fffffffL;    /* fake size for dirs */
+            dfd->o_fileln = DIR_FILE_LENGTH;/* fake size for dirs */
 
             /* set .. entry to point to new parent.
              * note that the root dir has a cluster# of zero.
              */
             if (!fd2->o_dnode->d_name[0])   /* empty name means root */
                 temp = 0;
-            else temp = fdparent->o_strtcl; /* else real start cluster */
+            else temp = fdparent->o_dfd->o_strtcl;  /* else real start cluster */
             swpw(temp);                     /* convert to disk format */
-            if (update_fcb(fd2,32+26,2L,(UBYTE *)&temp) < 0)
+            if (update_fcb(fd2,sizeof(FCB)+26,2L,(UBYTE *)&temp) < 0)
             {
                 KDEBUG(("xrename(): can't update .. entry\n"));
                 return EINTRN;
             }
 
             /* set attribute for this file in parent directory */
-            if (update_fcb(fdparent,fd2->o_dirbyt+11,1L,&att) < 0)
+            if (update_fcb(fdparent,fd2->o_dirbyt+FNAMELEN,1L,&att) < 0)
             {
                 KDEBUG(("xrename(): can't update parent's attr byte\n"));
                 return EINTRN;
             }
         }
-        fd2->o_flag |= O_DIRTY;
+        dfd->o_flag |= O_DIRTY;
         if (att&FA_SUBDIR) {
             ixclose(fd2,CL_DIR|CL_FULL);    /* force flush & write */
             xmfreblk(fd2);                  /* free OFD */
@@ -1058,7 +1075,7 @@ long xrename(int n, char *p1, char *p2)
     else                        /* rename within directory */
     {
         builds(s2,buf);             /* build disk version of name */
-        if (update_fcb(fd,posp,11L,(UBYTE *)buf) < 0)   /* just overwrite the FCB */
+        if (update_fcb(fd,posp,FNAMELEN,(UBYTE *)buf) < 0)  /* just overwrite the FCB */
         {
             KDEBUG(("xrename(): can't update FCB with new name\n"));
             return EACCDN;
@@ -1096,16 +1113,14 @@ long xrename(int n, char *p1, char *p2)
 long xchdir(char *p)
 {
     DND *dnd;
-    long rc;
     int olddir, newdir, dlog;
     const char *s;
 
     if (contains_wildcard_characters(p))
         return EPTHNF;
 
-    if (p[1] == ':')
-        dlog = toupper(p[0]) - 'A';
-    else
+    dlog = extract_drive_number(p);
+    if (dlog < 0)
         dlog = run->p_curdrv;
 
     /*
@@ -1116,9 +1131,7 @@ long xchdir(char *p)
     /*
      * get the DND for the new directory
      */
-    rc = (long)(dnd = findit(p,&s,1));
-    if (rc < 0L)
-        return rc;
+    dnd = findit(p,&s,1);
     if (!dnd)
         return EPTHNF;
 
@@ -1243,12 +1256,12 @@ long xgetdir(char *buf, int drv)
 /* dn: dir descr for dir */
 FCB *dirinit(DND *dn)
 {
-    OFD *fd;            /*  ofd for this dir  */
+    OFD *fd;            /*  OFD for this dir  */
     int num;
     RECNO i2;
     UBYTE *s1;
     DMD *dm;
-    FCB *f1;
+    FCB *fcb;
 
     fd = dn->d_ofd;                                 /*  OFD for dir */
     num = (dm = fd->o_dmd)->m_recsiz;               /*  bytes/rec   */
@@ -1267,10 +1280,10 @@ FCB *dirinit(DND *dn)
     /*
      *  now zero out the first record and return a pointer to it
      */
-    f1 = (FCB *) (s1 = getrec(fd->o_currec,fd,1));
+    fcb = (FCB *) (s1 = getrec(fd->o_currec,fd,1));
 
     bzero(s1, num);
-    return f1;
+    return fcb;
 }
 
 
@@ -1289,17 +1302,17 @@ static char *packit(char *s, char *d)
     if (*s)
     {
         s0 = s;
-        for (i = 0; (i < 8) && (*s) && (*s != ' '); i++)
+        for (i = 0; (i < LEN_ZNODE) && (*s) && (*s != ' '); i++)
             *d++ = *s++;
 
         if (*s0 != '.') /* not a special directory entry */
         {
-            s = s0 + 8; /* ext */
+            s = s0 + LEN_ZNODE; /* ext */
 
             if (*s != ' ')
             {
                 *d++ = '.';
-                for (i = 0; (i < 3) && (*s) && (*s != ' '); i++)
+                for (i = 0; (i < LEN_ZEXT) && (*s) && (*s != ' '); i++)
                     *d++ = *s++;
             }
         }
@@ -1325,22 +1338,22 @@ static void unpackit(const char *src, char *dst)
     int i;
 
     /* initialise destination */
-    memset(dst,' ',11);
+    memset(dst,' ',FNAMELEN);
 
     /* process NAME */
-    for (i = 0, s = src, d = dst; (i < 8) && *s && (*s != '.'); i++)
+    for (i = 0, s = src, d = dst; (i < LEN_ZNODE) && *s && (*s != '.'); i++)
         *d++ = *s++;
 
-    /* find start of EXT (just in case NAME is >8 chars long) */
+    /* find start of EXT (just in case NAME is >LEN_ZNODE chars long) */
     while(*s)
         if (*s++ == '.')
             break;
 
     /* process EXT */
-    for (i = 0, d = dst+8; (i < 3) && *s; i++)
+    for (i = 0, d = dst+LEN_ZNODE; (i < LEN_ZEXT) && *s; i++)
         *d++ = *s++;
 
-    *(dst+11) = '\0';
+    *(dst+FNAMELEN) = '\0';
 }
 
 
@@ -1367,7 +1380,7 @@ static char *dopath(DND *p, char *buf, int *len)
             *buf++ = *tp++;
         else
         {
-            *buf++ = SLASH;
+            *buf++ = PATHSEP;
             break;
         }
     }
@@ -1388,6 +1401,8 @@ static const long negone = { -1L };
  */
 /*  name: name of file/dir
  * dflag: T: name is for a directory
+ *
+ * returns NULL if not found
  */
 DND *findit(char *name, const char **sp, int dflag)
 {
@@ -1395,15 +1410,16 @@ DND *findit(char *name, const char **sp, int dflag)
     const char *n;
     DND *pp, *newp;
     int i;
-    char s[11];
+    char s[FNAMELEN], *q;
 
     /* crack directory and drive */
 
     n = name;
     KDEBUG(("findit(%s)\n",n));
 
-    if ((long)(p = dcrack(&n)) < 0)                     /* M01.01.1214.01 */
-        return p;
+    p = dcrack(&n);
+    if (!p)
+        return NULL;
 
     /*
      *  Force scan() to read from the beginning of the directory again,
@@ -1425,12 +1441,20 @@ DND *findit(char *name, const char **sp, int dflag)
         }
 
         /*
+         * wildcards in pathnames are forbidden [note: getpath() has
+         * already converted a wildcard of '*' into a series of '?']
+         */
+        for (q = s; q < s+FNAMELEN; )
+            if (*q++ == '?')
+                return NULL;
+
+        /*
          *  go down a level in the path...
          *     save a pointer to the current DND, which will
          *     become the parent, and get the node on the left,
          *     which is the first child.
          */
-        pp = p;                 /*  save ptr to parent dnd      */
+        pp = p;                 /*  save ptr to parent DND      */
 
         if (!(newp = p->d_left))
         {                               /*  [1] [see below]     */
@@ -1447,7 +1471,7 @@ DND *findit(char *name, const char **sp, int dflag)
          *     we should rescan the whole directory and make sure they
          *     are all logged in.
          */
-        while(p && (strncasecmp(s,p->d_name,11) != 0))
+        while(p && (strncasecmp(s,p->d_name,FNAMELEN) != 0))
         {
             newp = p->d_right;          /*  next sibling        */
 
@@ -1469,7 +1493,7 @@ DND *findit(char *name, const char **sp, int dflag)
     } while (p && i);
 
     /* p = 0 ==> not found
-     i = 0 ==> found at p (dnd entry)
+     i = 0 ==> found at p (DND entry)
      n = points at filename */
 
     *sp = n;
@@ -1495,12 +1519,12 @@ DND *findit(char *name, const char **sp, int dflag)
  *  scan - scan a directory for an entry with the desired name.
  *      scans a directory indicated by a DND.  attributes figure in matching
  *      as well as the entry's name.  posp is an indicator as to where to start
- *      searching.  A posp of -1 means to use the scan pointer in the dnd, and
+ *      searching.  A posp of -1 means to use the scan pointer in the DND, and
  *      return the pointer to the DND, not the FCB.
  */
 FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
 {
-    char name[12];
+    char name[FNAMELEN+1];
     FCB *fcb;
     OFD *fd;
     DND *dnd1;
@@ -1510,7 +1534,7 @@ FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
 
     m = 0;                  /*  have_match = false                  */
     builds(n,name);         /*  format name into dir format         */
-    name[11] = att;
+    name[FNAMELEN] = att;
 
     dnd1 = 0; /* dummy to avoid warning */
 
@@ -1530,7 +1554,7 @@ FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
     /*
      *  scan thru the directory file, looking for a match
      */
-    while ((fcb = (FCB *) ixread(fd,32L,NULL)) && (fcb->f_name[0]))
+    while ((fcb = ixgetfcb(fd)) && (fcb->f_name[0]))
     {
         /*
          *  Add New DND.
@@ -1571,7 +1595,7 @@ FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
 
     if (*posp == -1)
     {       /*  seek to position of found entry  */
-        ixlseek(fd,fd->o_bytnum - 32);
+        ixlseek(fd,fd->o_bytnum - sizeof(FCB));
         return (FCB *)dnd1;
     }
 
@@ -1583,7 +1607,7 @@ FCB *scan(DND *dnd, const char *n, WORD att, LONG *posp)
  *  makdnd - make a child subdirectory of directory p
  *              M01.01.SCC.FS.07
  */
-static DND *makdnd(DND *p, FCB *b)
+static DND *makdnd(DND *p, FCB *fcb)
 {
     DIRTBL_ENTRY *dt;
     DND *p1;
@@ -1643,14 +1667,14 @@ static DND *makdnd(DND *p, FCB *b)
     /* complete the initialization */
 
     p1->d_ofd = (OFD *) 0;
-    p1->d_strtcl = b->f_clust;
+    p1->d_strtcl = fcb->f_clust;
     swpw(p1->d_strtcl);
     p1->d_drv = p->d_drv;
     p1->d_dirfil = fd;
-    p1->d_dirpos = fd->o_bytnum - 32;
-    p1->d_td.time = b->f_td.time;   /* note: DND time/date are  */
-    p1->d_td.date = b->f_td.date;   /*  actually little-endian! */
-    memcpy(p1->d_name, b->f_name, 11);
+    p1->d_dirpos = fd->o_bytnum - sizeof(FCB);
+    p1->d_td.time = fcb->f_td.time; /* note: DND time/date are  */
+    p1->d_td.date = fcb->f_td.date; /*  actually little-endian! */
+    memcpy(p1->d_name, fcb->f_name, FNAMELEN);
 
     KDEBUG(("\n makdnd(%p)",p1));
 
@@ -1666,14 +1690,13 @@ static DND *makdnd(DND *p, FCB *b)
  *      path element.
  *
  *  returns
- *      ptr to DND for 1st element in path, or error
+ *      ptr to DND for 1st element in path, or NULL for error
  */
 static DND *dcrack(const char **np)
 {
     const char *n;
     DND *p;
     int d;
-    LONG l;                                             /* M01.01.1212.01 */
 
     KDEBUG(("\n dcrack(%p -> '%s')",np,*np));
 
@@ -1682,25 +1705,23 @@ static DND *dcrack(const char **np)
      */
 
     n = *np;                    /*  get ptr to name             */
-    if (n[1] == ':')            /*  if we start with drive spec */
-    {
-        d = toupper(n[0]) - 'A';/*    compute drive number      */
+    d = extract_drive_number(n);
+    if (d >= 0)                 /*  valid drive ?               */
         n += 2;                 /*    bump past drive number    */
-    }
     else                        /*  otherwise                   */
         d = run->p_curdrv;      /*    assume default            */
 
     /* M01.01.1212.01 */
-    if ((l=ckdrv(d, TRUE)) < 0) /*  check for valid drive & log */
-        return (DND *)l;        /*    in.  abort if error       */
+    if (ckdrv(d, TRUE) < 0)     /*  check for valid drive & log in */
+        return NULL;            /*    abort if error               */
 
     /*
-     *  if the pathspec begins with SLASH, then the first element is
+     *  if the pathspec begins with PATHSEP, then the first element is
      *  the root.  Otherwise, it is the current default directory.  Get
      *  the proper DND for this element
     */
 
-    if (*n == SLASH)
+    if (*n == PATHSEP)
     {   /* [D:]\path */
         p = drvtbl[d]->m_dtl;   /*  get root dir for log drive  */
         n++;                    /*  skip over slash             */
@@ -1728,8 +1749,8 @@ static DND *dcrack(const char **np)
  *  returns
  *      -1 if '.'
  *      -2 if '..'
- *       0 if p => name of a file (no trailing SLASH or !dirspec)
- *      >0 (nbr of chars in path element (up to SLASH)) && buffer 'd' filled.
+ *       0 if p => name of a file (no trailing PATHSEP or !dirspec)
+ *      >0 (nbr of chars in path element (up to PATHSEP)) && buffer 'd' filled.
  *
  */
 
@@ -1742,12 +1763,12 @@ static int getpath(const char *p, char *d, int dirspec)
     int i, i2;
     const char *p1;
 
-    for (i = 0, p1 = p; *p1 && (*p1 != SLASH); p1++, i++)
+    for (i = 0, p1 = p; *p1 && (*p1 != PATHSEP); p1++, i++)
         ;
 
     /*
      *  If the string we have just scanned over is a directory name, it
-     *  will either be terminated by a SLASH, or 'dirspec' will be set
+     *  will either be terminated by a PATHSEP, or 'dirspec' will be set
      *  indicating that we are dealing with a directory path only
      *  (no file name at the end).
      */
@@ -1786,7 +1807,7 @@ static BOOL match(char *s1, char *s2)
      **  skip VFAT long file name entries
      */
 
-    if (s2[11] == FA_LFN)
+    if (s2[FNAMELEN] == FA_LFN)
         return FALSE;
 
     /*
@@ -1806,7 +1827,7 @@ static BOOL match(char *s1, char *s2)
      **  compare names
      */
 
-    for (i = 0; i < 11; i++, s1++, s2++)
+    for (i = 0; i < FNAMELEN; i++, s1++, s2++)
         if (*s1 != '?')
             if (toupper(*s1) != toupper(*s2))
                 return FALSE;
@@ -1843,7 +1864,7 @@ static void makbuf(FCB *f, DTAINFO *dt)
 
 
 /*
- *  getdnd - find a dnd with matching name
+ *  getdnd - find a DND with matching name
  */
 static DND *getdnd(char *n, DND *d)
 {
@@ -1851,7 +1872,7 @@ static DND *getdnd(char *n, DND *d)
 
     for (dnd = d->d_left; dnd; dnd = dnd->d_right)
     {
-        if (strncasecmp(n,dnd->d_name,11) == 0)
+        if (strncasecmp(n,dnd->d_name,FNAMELEN) == 0)
             return dnd;
     }
 
@@ -1899,6 +1920,7 @@ static void freednd(DND *dn)                    /* M01.01.1031.02 */
 OFD *makofd(DND *p)
 {
     OFD *f;
+    DFD *dfd;
 
     /*
      * if we run out of memory when allocating the OFD, xmgetblk()
@@ -1912,14 +1934,18 @@ OFD *makofd(DND *p)
 
     p->d_ofd = f;       /* update pointer in DND */
 
-    f->o_strtcl = p->d_strtcl;
-    f->o_fileln = 0x7fffffffL;
+    dfd = &f->o_disk;
+    f->o_dfd = dfd;
     f->o_dirfil = p->d_dirfil;
     f->o_dnode = p->d_parent;
     f->o_dirbyt = p->d_dirpos;
-    f->o_td.date = p->d_td.date;
-    f->o_td.time = p->d_td.time;
     f->o_dmd = p->d_drv;
+
+    dfd->o_usecnt = 1;
+    dfd->o_td.date = p->d_td.date;
+    dfd->o_td.time = p->d_td.time;
+    dfd->o_strtcl = p->d_strtcl;
+    dfd->o_fileln = DIR_FILE_LENGTH;
 
     return f;
 }

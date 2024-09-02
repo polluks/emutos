@@ -2,7 +2,7 @@
  * fsdrive.c - physical drive routines for file system
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2019 The EmuTOS development team
+ *               2002-2024 The EmuTOS development team
  *
  * This file is distributed under the GPL, version 2 or at your
  * option any later version.  See doc/license.txt for details.
@@ -68,18 +68,26 @@ LONG    drvsel;
  *
  *
  *      returns:
- *          ERR     if getbpb() failed
- *          ENSMEM  if log() failed
- *          EINTRN  if no room in dirtbl
+ *          EDRIVE  invalid drive specified
+ *          EPTHNF  unmounted removable drive specified
+ *          ENSMEM  if log_media() failed (with either EDRIVE or ENSMEM), or
+ *                  dirtbl[] is full
  *          drive nbr if success.
  */
-long ckdrv(int d, BOOL checkrem)
+WORD ckdrv(int d, BOOL checkrem)
 {
     int curdir;
     LONG mask;
     BPB *b;
 
     KDEBUG(("ckdrv(%i)\n",d));
+
+    /*
+     * d mustn't be negative as shifting left by a negative amount
+     * is undefined in the C standard
+     */
+    if (d < 0)
+        return EDRIVE;
 
     mask = 1L << d;
 
@@ -89,9 +97,6 @@ long ckdrv(int d, BOOL checkrem)
 
         if (!b)
             return (mask&drvrem) ? EPTHNF : EDRIVE;
-
-        if ((long)b < 0)
-            return (long)b;
 
         if (log_media(b,d))
             return ENSMEM;
@@ -176,9 +181,10 @@ static int log2ul(unsigned long n)
 /* b: bios parm block for drive
  * drv: drive number
  */
-long log_media(BPB *b, int drv)
+WORD log_media(BPB *b, int drv)
 {
     OFD *fo, *f;                        /*  M01.01.03   */
+    DFD *dfd;
     DND *d;
     DMD *dm;
     unsigned long rsiz, cs, n, fs;
@@ -210,6 +216,7 @@ long log_media(BPB *b, int drv)
     d->d_name[0] = 0;           /*  null out name of root       */
 
     dm->m_16 = b->b_flags & B_16;       /*  set 12 or 16 bit fat flag   */
+    dm->m_1fat = b->b_flags & B_1FAT;   /*  set single FAT flag         */
     dm->m_clsiz = cs;                   /*  set cluster size in sectors */
     dm->m_clsizb = b->clsizb;           /*    and in bytes              */
     dm->m_recsiz = rsiz;                /*  set record (sector) size    */
@@ -221,12 +228,15 @@ long log_media(BPB *b, int drv)
     dm->m_clblog = log2ul(dm->m_clsizb);/*  log of bytes/clus           */
     dm->m_clbm = (1L<<dm->m_clblog)-1;  /*    and mask of it            */
 
-    f->o_fileln = n * rsiz;             /*  size of file (root dir)     */
-    d->d_strtcl = f->o_strtcl = 2;      /*  root start pseudo-cluster   */
+    f->o_dfd = dfd = &f->o_disk;
+    dfd->o_fileln = n * rsiz;           /*  size of file (root dir)     */
+    d->d_strtcl = dfd->o_strtcl = 2;    /*  root start pseudo-cluster   */
 
     fo = dm->m_fatofd;                  /*  OFD for 'fat file'          */
-    fo->o_strtcl = 2;                   /*  FAT start pseudo-cluster    */
     fo->o_dmd = dm;                     /*  link with DMD               */
+    fo->o_dfd = dfd = &fo->o_disk;
+    dfd->o_fileln = fs * rsiz;          /*  FAT size                    */
+    dfd->o_strtcl = 2;                  /*  FAT start pseudo-cluster    */
 
     dm->m_recoff[BT_FAT] = (RECNO)b->fatrec;
     dm->m_recoff[BT_ROOT] = (RECNO)b->fatrec + fs;
@@ -234,8 +244,6 @@ long log_media(BPB *b, int drv)
 
     KDEBUG(("log_media(%i) dm->m_recoff[0-2] = 0x%lx/0x%lx/0x%lx\n",
             drv, dm->m_recoff[0],dm->m_recoff[1],dm->m_recoff[2]));
-
-    fo->o_fileln = fs * rsiz;
 
     return E_OK;
 }

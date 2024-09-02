@@ -1,7 +1,7 @@
 /*
  * string.c - simple implementation of <string.h> ANSI routines
  *
- * Copyright (C) 2002-2019 The EmuTOS development team
+ * Copyright (C) 2002-2024 The EmuTOS development team
  *
  * Authors:
  *  LVL     Laurent Vogel
@@ -63,7 +63,7 @@ char *strcpy(char *dest, const char *src)
  * truncation: if the return value is greater than or equal
  * to the specified length, then truncation has occurred.
  */
-size_t strlcpy(char *dest,const char *src,size_t count)
+size_t strlcpy(char *RESTRICT dest,const char *RESTRICT src,size_t count)
 {
 char *d = dest;
 const char *s = src;
@@ -81,6 +81,9 @@ size_t n;
     return s-src-1;
 }
 
+/* Avoid bug: libc function implementation is optimized as a call to itself.
+ * https://gcc.gnu.org/bugzilla/show_bug.cgi?id=56888 */
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
 size_t strlen(const char *s)
 {
     size_t n;
@@ -89,7 +92,7 @@ size_t strlen(const char *s)
     return (n);
 }
 
-char *strcat(char *dest, const char *src)
+char *strcat(char *RESTRICT dest, const char *RESTRICT src)
 {
     char *tmp = dest;
     while( *tmp++ )
@@ -187,7 +190,7 @@ static void sprintf_outc(int c)     /* Output one character from doprintf */
     *sprintf_str++ = c;
 }
 
-int sprintf(char *str, const char *fmt, ...)
+int sprintf(char *RESTRICT str, const char *RESTRICT fmt, ...)
 {
     int n;
     va_list ap;

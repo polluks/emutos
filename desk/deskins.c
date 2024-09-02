@@ -8,7 +8,7 @@
  *          . install application
  *          . remove desktop icons
  *
- *      Copyright 2002-2019 The EmuTOS development team
+ *      Copyright 2002-2024 The EmuTOS development team
  *
  *      This software is licenced under the GNU Public License.
  *      Please see LICENSE.TXT for further information.
@@ -59,8 +59,8 @@ static void anode_dump(char *msg)
 
     kprintf("%s:\n",msg);
     for (pa = G.g_ahead; pa; pa = pa->a_next)
-        kprintf("  flags=0x%04x,type=%d,aicon=%d,dicon=%d,appl=%s,data=%s\n",
-                pa->a_flags,pa->a_type,pa->a_aicon,pa->a_dicon,pa->a_pappl,pa->a_pdata);
+        kprintf("  pa=%p,flags=0x%04x,type=%d,aicon=%d,dicon=%d,appl=%s,data=%s\n",
+                pa,pa->a_flags,pa->a_type,pa->a_aicon,pa->a_dicon,pa->a_pappl,pa->a_pdata);
 }
 #endif
 
@@ -78,6 +78,38 @@ WORD is_installed(ANODE *pa)
         return FALSE;
     return TRUE;
 }
+
+
+#if CONF_WITH_VIEWER_SUPPORT
+/*
+ *  Routine to tell if an anode is suitable as an installed viewer
+ */
+BOOL is_viewer(ANODE *pa)
+{
+    char *p;
+    WORD found, component;
+
+    /*
+     * must be a file with non-negative icon numbers
+     */
+    if ((pa->a_type != AT_ISFILE) || (pa->a_aicon < 0) || (pa->a_dicon < 0))
+        return FALSE;
+
+    /*
+     * pdata must be an all-wildcard spec: we make sure both components
+     * of the filename are wildcard-only
+     */
+    for (found = 0, component = 1, p = pa->a_pdata; *p; p++)
+    {
+        if ((*p == '*') || (*p == '?'))
+            found |= component;
+        else if (*p == '.')
+            component <<= 1;
+    }
+
+    return (found==3) ? TRUE : FALSE;
+}
+#endif
 
 
 /*
@@ -125,8 +157,8 @@ void snap_icon(WORD x, WORD y, WORD *px, WORD *py, WORD sxoff, WORD syoff)
      * and convert it to pixels
      */
     icw  = G.g_icw;
-    columns = G.g_wdesk / icw;
-    spare_pixels = G.g_wdesk - (columns * icw);
+    columns = G.g_desk.g_w / icw;
+    spare_pixels = G.g_desk.g_w - (columns * icw);
 
     xgrid = (x - sxoff + (icw / 2)) / icw;  /* x grid position */
     xgrid = min(xgrid, columns-1);          /* clamp it for safety */
@@ -141,14 +173,14 @@ void snap_icon(WORD x, WORD y, WORD *px, WORD *py, WORD sxoff, WORD syoff)
      * and convert it to pixels
      */
     ich = G.g_ich;
-    rows = G.g_hdesk / ich;
-    spare_pixels = G.g_hdesk - (rows * ich);
+    rows = G.g_desk.g_h / ich;
+    spare_pixels = G.g_desk.g_h - (rows * ich);
 
-    y -= G.g_ydesk;
+    y -= G.g_desk.g_y;
     ygrid  = (y - syoff + (ich / 2)) / ich; /* y grid position */
     ygrid = min(ygrid, rows-1);             /* clamp it for safety */
     *py = (ygrid * ich) + (spare_pixels / rows);
-    *py += G.g_ydesk;
+    *py += G.g_desk.g_y;
 }
 
 
@@ -166,8 +198,8 @@ static void ins_posdisk(WORD dx, WORD dy, WORD *pdx, WORD *pdy)
 {
     WORD  xcnt, ycnt, xin, yin, x, y;
 
-    xcnt = G.g_wdesk / G.g_icw;     /* number of grid positions */
-    ycnt = G.g_hdesk / G.g_ich;
+    xcnt = G.g_desk.g_w / G.g_icw;  /* number of grid positions */
+    ycnt = G.g_desk.g_h / G.g_ich;
 
     xin = dx / G.g_icw;             /* input grid position */
     yin = dy / G.g_ich;
@@ -319,6 +351,28 @@ static void clear_all_autorun(void)
 }
 
 
+#if CONF_WITH_VIEWER_SUPPORT
+/*
+ * remove all ANODEs that have the viewer flag set: we expect there
+ * will be a maximum of 1, but we handle any number
+ */
+static void remove_all_viewers(void)
+{
+    ANODE *pa, *next;
+
+    for (pa = G.g_ahead; pa; pa = next)
+    {
+        next = pa->a_next;      /* remember in case we free below */
+        if (pa->a_flags & AF_VIEWER)
+        {
+            KDEBUG(("removing existing default viewer %s\n",pa->a_pappl));
+            app_free(pa);
+        }
+    }
+}
+#endif
+
+
 /*
  * convert ascii to WORD
  *
@@ -391,92 +445,19 @@ static WORD get_funkey(OBJECT *tree,ANODE *pa,BOOL installed)
 
 
 /*
- * install application
+ * handle install application dialog
+ *
+ * returns:
+ *      1   application installed/removed
+ *      0   nothing changed
+ *      -1  user cancelled
  */
-WORD ins_app(WORD curr)
+static WORD ins_app_dialog(ANODE *pa, char *pathname, char *pfname, BOOL installed)
 {
-    ANODE *pa;
-    FNODE *pf;
-    WNODE *pw;
     OBJECT *tree;
+    WORD field, exitobj, funkey;
     WORD change = 0;    /* -ve means cancel, 0 means no change, +ve means change */
-    WORD isapp, field, exitobj, funkey;
-    BOOL installed;
-    char *pfname, *p, *q;
     char name[LEN_ZFNAME];
-    char pathname[MAXPATHLEN];
-
-    pa = i_find(G.g_cwin, curr, &pf, &isapp);
-    if (!pa)
-        return 0;
-
-#if CONF_WITH_DESKTOP_SHORTCUTS
-    /*
-     * here we handle the case of installing an application identified by
-     * a desktop shortcut.  we need to determine if this application is
-     * already installed, i.e. if there already exists a non-shortcut ANODE
-     * for this application.
-     *
-     * if so, we change the ANODE pointer to point to it, and continue as
-     * though the user has selected the application in a desktop window.
-     *
-     * if not, we handle first-time installation later below.
-     */
-    if (G.g_cwin == DESKWH) /* we're on the desktop, so this is a shortcut icon */
-    {
-        ANODE *temppa;
-
-        strcpy(pathname,pa->a_pdata);   /* get path for app_afind_by_name() */
-        p = filename_start(pathname);
-        *p = '\0';
-        temppa = app_afind_by_name(AT_ISFILE,AF_ISDESK|AF_WINDOW,pathname,pa->a_pappl,&isapp);
-        if (temppa)
-        {
-            if (strcmp(temppa->a_pappl,pa->a_pdata) == 0)
-            {
-                pa = temppa;
-                KDEBUG(("Found installed app anode for desktop shortcut\n"));
-            }
-        }
-    }
-#endif
-
-    installed = is_installed(pa);
-
-    /*
-     * first, get full path & name of application
-     */
-    if (installed)
-    {
-        p = pa->a_pappl;
-        q = filename_start(p);
-        pfname = q;
-    }
-    else
-    {
-        if (!isapp)     /* selected item appears to be a data file */
-            return 0;
-#if CONF_WITH_DESKTOP_SHORTCUTS
-        /*
-         * handle install application for a desktop shortcut when there
-         * is no existing 'install application' anode
-         */
-        if (pa->a_flags & AF_ISDESK)
-        {
-            p = pa->a_pdata;
-            q = filename_start(p);
-            pfname = pa->a_pappl;
-        }
-        else
-#endif
-        {
-            pw = win_find(G.g_cwin);
-            p = pw->w_pnode.p_spec;
-            q = filename_start(p);
-            pfname = pf->f_name;
-        }
-    }
-    strlcpy(pathname,p,q-p+1);  /* copy pathname including trailing backslash */
 
     /*
      * deselect all objects
@@ -491,7 +472,7 @@ WORD ins_app(WORD curr)
     inf_sset(tree, APARGS, installed ? pa->a_pargs : "");
     inf_sset(tree, APDOCTYP, installed ? pa->a_pdata+2 : "");
     if (pa->a_funkey)
-        sprintf(name, "%02d", pa->a_funkey);
+        sprintf(name, "%u ", pa->a_funkey); /* inf_sset() will truncate if necessary */
     else name[0] = '\0';
     inf_sset(tree, APFUNKEY, installed ? name : "");
 
@@ -577,11 +558,22 @@ WORD ins_app(WORD curr)
 
             strcpy(name,"*.");
             inf_sget(tree,APDOCTYP,name+2);
+            if (name[2] == '*')         /* prevent a badly-formed wildcard spec */
+                name[3] = '\0';
             if (!installed || strcmp(name,pa->a_pdata)) /* doc type has changed */
                 scan_str(name,&pa->a_pdata);
 
             inf_sget(tree,APARGS,name);
             scan_str(name,&pa->a_pargs);
+
+#if CONF_WITH_VIEWER_SUPPORT
+            if (is_viewer(pa))
+            {
+                remove_all_viewers();       /* remove any existing default viewer(s) */
+                pa->a_flags |= AF_VIEWER;   /* mark app as default viewer */
+                KDEBUG(("adding new default viewer %s\n",pa->a_pappl));
+            }
+#endif
 
             pa->a_aicon = IG_APPL;
             pa->a_dicon = IG_DOCU;
@@ -605,6 +597,162 @@ WORD ins_app(WORD curr)
     end_dialog(tree);
 
     return change;
+}
+
+
+/*
+ * install one application
+ *
+ * returns:
+ *      1   application installed/removed
+ *      0   nothing changed
+ *      -1  user cancelled
+ */
+static WORD ins_one_app(WORD curr, FNODE *pf)
+{
+    ANODE *pa;
+    WNODE *pw;
+    BOOL installed, isapp;
+    char *pfname, *p, *q;
+    char pathname[MAXPATHLEN];
+
+#if CONF_WITH_DESKTOP_SHORTCUTS
+    /*
+     * here we handle the case of installing an application identified by
+     * a desktop shortcut.  we need to determine if this application is
+     * already installed, i.e. if there already exists a non-shortcut ANODE
+     * for this application.
+     *
+     * if so, we change the ANODE pointer to point to it, and continue as
+     * though the user has selected the application in a desktop window.
+     *
+     * if not, we handle first-time installation later below.
+     */
+    if (G.g_cwin == DESKWH) /* we're on the desktop, so this is a shortcut icon */
+    {
+        ANODE *temppa;
+
+        pa = app_afind_by_id(curr);
+        if (!pa)        /* "can't happen" */
+            return 0;
+        strcpy(pathname, pa->a_pappl);  /* get path for app_afind_by_name() */
+        p = filename_start(pathname);
+        *p = '\0';
+        temppa = app_afind_by_name(AT_ISFILE,AF_ISDESK|AF_WINDOW, pathname, filename_start(pa->a_pappl), &isapp);
+        if (temppa)
+        {
+            if (strcmp(temppa->a_pappl, pa->a_pappl) == 0)
+            {
+                pa = temppa;
+                KDEBUG(("Found installed app anode for desktop shortcut\n"));
+            }
+        }
+    }
+    else
+#endif
+    {
+        pw = win_find(G.g_cwin);
+#if CONF_WITH_VIEWER_SUPPORT
+        /*
+         * if there is a default viewer, and the selected file is it,
+         * we use its anode; otherwise we search for a matching anode,
+         * ignoring the viewer.
+         */
+        pa = app_afind_viewer();
+        strcpy(pathname, pw->w_pnode.p_spec);       /* full name of file */
+        strcpy(filename_start(pathname), pf->f_name);
+        if (pa && (strcmp(pathname, pa->a_pappl) == 0))
+            ;
+        else
+#endif
+            pa = app_afind_by_name(AT_ISFILE, AF_ISDESK|AF_WINDOW|AF_VIEWER,
+                                    pw->w_pnode.p_spec, pf->f_name, &isapp);
+        if (!pa)
+            return 0;
+    }
+
+    installed = is_installed(pa);
+
+    /*
+     * first, get full path & name of application
+     */
+    if (installed)
+    {
+        p = pa->a_pappl;
+        q = filename_start(p);
+        pfname = q;
+    }
+    else
+    {
+#if CONF_WITH_DESKTOP_SHORTCUTS
+        /*
+         * handle install application for a desktop shortcut when there
+         * is no existing 'install application' anode
+         */
+        if (pa->a_flags & AF_ISDESK)
+        {
+            p = pa->a_pappl;
+            q = filename_start(p);
+            pfname = q;
+        }
+        else
+#endif
+        {
+            pw = win_find(G.g_cwin);
+            p = pw->w_pnode.p_spec;
+            q = filename_start(p);
+            pfname = pf->f_name;
+        }
+    }
+    strlcpy(pathname,p,q-p+1);  /* copy pathname including trailing backslash */
+
+    return ins_app_dialog(pa, pathname, pfname, installed);
+}
+
+
+
+/*
+ * install one or more applications
+ *
+ * returns:
+ *  0       no need to rebuild display
+ *  <0      need to rebuild windows
+ */
+WORD ins_app(void)
+{
+    WORD rc, change = 0;
+    WORD curr = 0;
+    FNODE *pf = NULL;
+
+#if CONF_WITH_DESKTOP_SHORTCUTS
+    if (G.g_cwin == DESKWH)
+    {
+        while( (curr = win_isel(G.g_screen, G.g_croot, curr)) )
+        {
+            rc = ins_one_app(curr, pf);
+            if (rc < 0)     /* user cancelled */
+                break;
+            /* we don't track changes since we don't rebuild the desktop */
+        }
+    }
+    else
+#endif
+    {
+        WNODE *pw = win_find(G.g_cwin);
+        for (pf = pw->w_pnode.p_flist; pf; pf = pf->f_next)
+        {
+            if (pf->f_selected)
+            {
+                rc = ins_one_app(curr, pf);
+                if (rc < 0)     /* user cancelled */
+                    break;
+                if (rc > 0)
+                    change++;
+            }
+        }
+    }
+
+    return change ? -1 : 0;
 }
 
 
@@ -639,6 +787,7 @@ static WORD install_desktop_icon(ANODE *pa)
     WORD start_fld = ID_ID;
     WORD change = 0;
     char curr_label[LEN_ZFNAME], new_label[LEN_ZFNAME], id[2];
+    char **label_ptr;
 
     /* find first available spot on desktop (before we alloc a new one) */
     ins_posdisk(0, 0, &x, &y);
@@ -652,6 +801,16 @@ static WORD install_desktop_icon(ANODE *pa)
     deselect_all(tree);
 #if !CONF_WITH_PRINTER_ICON
     tree[ID_PRINT].ob_flags |= HIDETREE;
+#endif
+
+/*
+ * adjust dialog
+ */
+#if CONF_WITH_3D_OBJECTS
+    /* avoid button overlap */
+    tree[ID_DOWN].ob_y += ADJ3DSTD;
+#else
+    tree[ID_DOWN].ob_y -= ADJBUTNV;
 #endif
 
     /*
@@ -676,6 +835,7 @@ static WORD install_desktop_icon(ANODE *pa)
     }
 
     id[0] = id[1] = '\0';
+    label_ptr = &pa->a_pappl;       /* default, true for disk/trash/printer icons */
 
     switch(pa->a_type)
     {
@@ -691,6 +851,7 @@ static WORD install_desktop_icon(ANODE *pa)
         tree[ID_PRINT].ob_state |= DISABLED;
         start_fld = ID_LABEL;
 #endif
+        label_ptr = &pa->a_pdata;
         break;
     case AT_ISDISK:
         id[0] = pa->a_letter;
@@ -718,8 +879,8 @@ static WORD install_desktop_icon(ANODE *pa)
         tree[ID_PRINT].ob_state &= ~DISABLED;
 #endif
     }
-    strcpy(curr_label, pa->a_pappl);
-    inf_sset(tree, ID_LABEL, pa->a_pappl);
+    strcpy(curr_label, *label_ptr);
+    inf_sset(tree, ID_LABEL, curr_label);
 
     curr_icon = (pa->a_aicon < 0) ? pa->a_dicon : pa->a_aicon;
     if (curr_icon < 0)
@@ -767,7 +928,7 @@ static WORD install_desktop_icon(ANODE *pa)
             }
             inf_sget(tree, ID_LABEL, new_label);
             if (strcmp(curr_label, new_label))      /* if label changed, */
-                scan_str(new_label, &pa->a_pappl);  /* update it         */
+                scan_str(new_label, label_ptr);     /* update it         */
             if (pa->a_aicon < 0)
                 pa->a_dicon = curr_icon;
             else
@@ -801,6 +962,16 @@ static WORD install_desktop_icon(ANODE *pa)
         }
         draw_fld(tree, ID_IBOX);
     }
+
+/*
+ * adjust dialog (restore)
+*/
+#if CONF_WITH_3D_OBJECTS
+    /* avoid button overlap */
+    tree[ID_DOWN].ob_y -= ADJ3DSTD;
+#else
+    tree[ID_DOWN].ob_y += ADJBUTNV;
+#endif
     end_dialog(tree);
 
     return change;
@@ -815,7 +986,7 @@ static const char exec_ext[][EXT_LENGTH+1] = { "TOS", "TTP", "PRG", "APP", "GTP"
 /*
  * test if file is executable, based on extension
  */
-static BOOL is_executable(const char *filename)
+BOOL is_executable(const char *filename)
 {
     WORD i, n;
 
@@ -889,8 +1060,8 @@ static ANODE *allocate_window_anode(WORD type)
  */
 static WORD install_window_icon(FNODE *pf)
 {
-    BOOL identical;
-    WORD edit_start, exitobj, dummy, type;
+    BOOL identical, dummy;
+    WORD edit_start, exitobj, type;
     WORD new_icon, curr_icon;
     WORD change = 0;
     OBJECT *tree;
@@ -948,6 +1119,15 @@ static WORD install_window_icon(FNODE *pf)
 
     insert_icon(tree, IW_ICON, curr_icon);
 
+/*
+ * adjust dialog
+ */
+#if CONF_WITH_3D_OBJECTS
+    /* avoid button overlap */
+    tree[IW_DOWN].ob_y += ADJ3DSTD;
+#else
+    tree[IW_DOWN].ob_y -= ADJBUTNV;
+#endif
     start_dialog(tree);
     while(1)
     {
@@ -1026,6 +1206,16 @@ static WORD install_window_icon(FNODE *pf)
         }
         draw_fld(tree, IW_IBOX);
     }
+
+/*
+ * adjust dialog (restore)
+*/
+#if CONF_WITH_3D_OBJECTS
+    /* avoid button overlap */
+    tree[IW_DOWN].ob_y -= ADJ3DSTD;
+#else
+    tree[IW_DOWN].ob_y += ADJBUTNV;
+#endif
     end_dialog(tree);
 
     return change;
@@ -1151,7 +1341,8 @@ WORD rmv_icon(WORD sobj)
 void ins_shortcut(WORD wh, WORD mx, WORD my)
 {
     char pathname[MAXPATHLEN], *p, *q;
-    WORD sobj, x, y, dummy;
+    WORD sobj, x, y;
+    BOOL dummy;
     ANODE *pa, *newpa;
     FNODE *pf;
     WNODE *pw;
@@ -1167,7 +1358,7 @@ void ins_shortcut(WORD wh, WORD mx, WORD my)
     sobj = 0;
     while ((sobj = win_isel(G.g_screen, G.g_croot, sobj)))
     {
-        pa = i_find(wh, sobj, &pf, NULL);   /* get ANODE of source */
+        pa = i_find(wh, sobj, &pf, NULL); /* get ANODE of source */
         if (!pa)
             continue;
         pw = win_find(wh);                  /* get WNODE of source */
@@ -1195,8 +1386,8 @@ void ins_shortcut(WORD wh, WORD mx, WORD my)
         newpa->a_letter = '\0';
         newpa->a_type = pa->a_type;
         newpa->a_obid = 0;          /* filled in by app_blddesk() */
-        scan_str(pf->f_name,&newpa->a_pappl);   /* store name */
-        scan_str(pathname,&newpa->a_pdata);     /* store full path */
+        scan_str(pathname, &newpa->a_pappl);    /* store full path */
+        scan_str(pf->f_name,&newpa->a_pdata);   /* store name */
         newpa->a_pargs = "";
         newpa->a_aicon = pa->a_aicon;
         newpa->a_dicon = pa->a_dicon;

@@ -1,7 +1,7 @@
 /*
  *  initinfo.c - Info screen at startup
  *
- * Copyright (C) 2001-2019 by Authors:
+ * Copyright (C) 2001-2022 by Authors:
  *
  * Authors:
  *  MAD     Martin Doering
@@ -43,6 +43,9 @@
 #define SCREEN_WIDTH ((WORD)v_cel_mx + 1)
 
 #if FULL_INITINFO
+
+#define ESC_ASCII   0x1b
+#define DEL_ASCII   0x7f
 
 #define INFO_LENGTH 40      /* width of info lines (must fit in low-rez) */
 #define LOGO_LENGTH 34      /* must equal length of strings in EmuTOS logo */
@@ -278,6 +281,9 @@ WORD initinfo(ULONG *pshiftbits)
     LONG hdd_available = blkdev_avail(HARDDISK_BOOTDEV);
     ULONG shiftbits;
 
+    /* clear startup message */
+    cprintf("\033E");
+
     /*
      * If additional info lines are going to be printed in specific cases,
      * then initinfo_height must be adjusted in the same way here.
@@ -328,7 +334,6 @@ WORD initinfo(ULONG *pshiftbits)
     pair_end();
 
     pair_start(_("Machine")); cprintf(machine_name()); pair_end();
-/*  pair_start(_("MMU available")); cprintf(_("No")); pair_end(); */
     pair_start("ST-RAM"); cprintf_bytesize(stramsize); pair_end();
 
 #if CONF_WITH_ALT_RAM
@@ -372,6 +377,10 @@ WORD initinfo(ULONG *pshiftbits)
      * pause for a short while, or longer if:
      *  . a Shift key is held down, or
      *  . the user selects an alternate boot drive
+     *
+     * if the user reboots using Ctrl+Alt+Shift+Delete,
+     * and keeps the keys pressed for too long, we might see a
+     * spurious Del key press, and ignore it.
      */
     while (1)
     {
@@ -408,8 +417,12 @@ WORD initinfo(ULONG *pshiftbits)
             int c = LOBYTE(bconin2());
 
             c = toupper(c);
+            if (c == DEL_ASCII) {
+                /* eat spurious Delete key press */
+                continue;
+            } else
 #if WITH_CLI
-            if (c == 0x1b) {
+            if (c == ESC_ASCII) {
                 bootflags |= BOOTFLAG_EARLY_CLI;
             } else
 #endif
@@ -449,7 +462,7 @@ WORD initinfo(ULONG *pshiftbits)
 
 WORD initinfo(ULONG *pshiftbits)
 {
-    cprintf("EmuTOS Version %s\r\n", version);
+    /* we already displayed a startup message */
 
     *pshiftbits = kbshift(-1);
     return bootdev;
@@ -457,3 +470,9 @@ WORD initinfo(ULONG *pshiftbits)
 
 
 #endif   /* FULL_INITINFO */
+
+
+void display_startup_msg(void)
+{
+    cprintf("EmuTOS Version %s\r\n", version);
+}

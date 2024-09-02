@@ -1,8 +1,8 @@
 /*
- * entry.S - Front end of the screen driver and mouse stuff
+ * vdi_asm.S - Front end of the screen driver and mouse stuff
  *
  * Copyright 1999 Caldera, Inc. and Authors:
- * Copyright 2004-2019 The EmuTOS development team
+ * Copyright 2004-2024 The EmuTOS development team
  * Copyright      Steve Cavender
  *
  * This file is distributed under the GPL, version 2 or at your
@@ -38,16 +38,13 @@ _vditrap:
         rte
 
 no_vdi:
-        cmp.w   #0xfffe,d0              // vq_gdos call?
-        jeq     what_gdos
-
         cmp.w   #0xffff,d0              // query for jsr:able address?
         jeq     query
 
-        rte
-
-what_gdos:
-        move.l  #-2, d0                 // -2  -  no GDOS installed
+/*
+ * Just like Atari TOS, we leave d0 unchanged, indicating the absence of
+ * GDOS if this is called with -2 in the low-order word of d0.
+ */
         rte
 
 query:
@@ -153,7 +150,6 @@ no_ptsin:
 
         .extern _cur_ms_stat    // current mouse status
         .extern _draw_flag      // Non-zero means draw mouse form on vblank
-        .extern _mouse_flag     // Non-zero if mouse ints disabled
         .extern _newx           // New mouse x position
         .extern _newy           // New mouse y position
 
@@ -233,9 +229,6 @@ cl_done:
  * destroys:    nothing
  */
 _mouse_int:
-        tst.b   _mouse_flag     // If we are in a show/hide operation
-        jne     ms_exit         // just exit.
-
 #ifdef __mcoldfire__
         lea     -60(sp),sp
         movem.l d0-d7/a0-a6, (sp)       // save registers used

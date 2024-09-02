@@ -2,7 +2,7 @@
  * fs.h - file system defines
  *
  * Copyright (C) 2001 Lineo, Inc.
- *               2002-2019 The EmuTOS development team
+ *               2002-2024 The EmuTOS development team
  *
  * Authors:
  *  JSL   Jason S. Loveman
@@ -29,7 +29,7 @@
  *  constants
  */
 
-#define SLASH '\\'
+#define FNAMELEN    (LEN_ZNODE+LEN_ZEXT)    /* as found in dirs etc */
 
 /*
  * the following values are used by Atari TOS:
@@ -102,6 +102,36 @@ typedef struct
 
 
 /*
+ *  DFD - disk file data
+ *
+ *  this contains a copy of the data from the FCB on disk and is
+ *  contained within the OFD.
+ *
+ *  note: only one copy of the data is maintained in memory, in the
+ *  DFD in the first-opened OFD for a given file (the 'base OFD').
+ *  until all OFDs for that file are closed, other OFDs access this
+ *  data via the o_dfd pointer, which always points to the DFD in
+ *  the 'base OFD'.
+ */
+typedef struct
+{
+    UWORD o_flag;       /* see below                            */
+    WORD  o_usecnt;     /* count of open OFDs pointing here     */
+                    /* the following 3 items must be as in FCB: */
+    DOSTIME o_td;       /* creation time/date: little-endian!   */
+    CLNO  o_strtcl;     /* starting cluster number              */
+    long  o_fileln;     /* length of file in bytes              */
+} DFD;
+
+
+/*
+ * bit usage in o_flag 
+ */
+#define O_DIRTY     1   /* contents have changed, FCB on disk must be updated */ 
+
+
+
+/*
  *  OFD - open file descriptor
  *
  *  architectural restriction: for compatibility with FOLDRnnn.PRG,
@@ -110,12 +140,7 @@ typedef struct
 struct _ofd
 {
     OFD   *o_link;      /*  link to next OFD                    */
-    UWORD o_flag;
-                    /* the following 3 items must be as in FCB: */
-    DOSTIME o_td;       /*  creation time/date: little-endian!  */
-    CLNO  o_strtcl;     /*  starting cluster number             */
-    long  o_fileln;     /*  length of file in bytes             */
-
+    DFD   *o_dfd;       /*  link to DFD for this file           */
     DMD   *o_dmd;       /*  link to media descr                 */
     DND   *o_dnode;     /*  link to dir for this file           */
     OFD   *o_dirfil;    /*  OFD for dir for this file           */
@@ -125,9 +150,10 @@ struct _ofd
     CLNO  o_curcl;      /* current cluster number for file      */
     RECNO o_currec;     /* current record number for file       */
     UWORD o_curbyt;     /* byte pointer within current cluster  */
-    WORD  o_usecnt;     /* use count for inherited files        */
-    OFD   *o_thread;    /* mulitple open thread list            */
+    OFD   *o_thread;    /* multiple open thread list            */
     UWORD o_mod;        /* mode file opened in (see below)      */
+
+    DFD   o_disk;       /* data to be synchronised with the disk*/
 } ;
 
 /*
@@ -146,13 +172,6 @@ struct _ofd
 #define RW_MODE        2
 #define VALID_FOPEN_BITS    MODE_FAC    /* currently-valid bits for Fopen() */
 
-/*
- * O_DIRTY - Dirty Flag
- *
- * T: OFD is dirty, because of chg to startcl, length, time, etc.
- */
-#define O_DIRTY         1
-
 
 
 /*
@@ -163,7 +182,7 @@ struct _ofd
  */
 typedef struct
 {
-    char f_name[11];
+    char f_name[FNAMELEN];
     UBYTE f_attrib;
     UBYTE f_fill[10];
     DOSTIME f_td;           /* time, date */
@@ -186,7 +205,7 @@ typedef struct
  */
 struct _dnd         /* directory node descriptor */
 {
-    char d_name[11];    /*  directory name                      */
+    char d_name[FNAMELEN];  /*  directory name                  */
     UBYTE d_fill;       /*  attributes?                         */
     UWORD d_flag;
     CLNO d_strtcl;      /*  starting cluster number of dir      */
@@ -238,7 +257,8 @@ struct _dmd         /* drive media block */
 
     OFD    *m_ofl;      /*  list of open files                  */
     DND    *m_dtl;      /* root of directory tree list          */
-    UWORD  m_16;        /* 16 bit fat ?                         */
+    UBYTE  m_16;        /* 16 bit fat ?                         */
+    UBYTE  m_1fat;      /* 1 FAT only ?                         */
 } ;
 
 
@@ -344,10 +364,10 @@ extern  FTAB    sft[];
  */
 
 /* check the drive, see if it needs to be logged in. */
-long ckdrv(int d, BOOL checkrem);
+WORD ckdrv(int d, BOOL checkrem);
 
 /* log in media 'b' on drive 'drv'. */
-long log_media(BPB *b, int drv);
+WORD log_media(BPB *b, int drv);
 
 /*
  * in fshand.c
@@ -414,6 +434,8 @@ long eof(int h);
 /* seek to byte position n on file with handle h */
 long xlseek(long n, int h, int flg);
 long ixlseek(OFD *p, long n);
+
+FCB *ixgetfcb(OFD *p);
 
 long xread(int h, long len, void *ubufr);
 long ixread(OFD *p, long len, void *ubufr);

@@ -1,7 +1,7 @@
 /*
  * lineavars.S - Graphics related system variables
  *
- * Copyright (C) 2001-2019 by Authors:
+ * Copyright (C) 2001-2022 by Authors:
  *
  * Authors:
  *  THH  Thomas Huth
@@ -151,7 +151,7 @@ _disab_cnt:     .ds.w   1       // -346 disable depth count. (>0 => disabled)
 _newx:          .ds.w   1       // -344 new mouse x&y position
 _newy:          .ds.w   1
 _draw_flag:     .ds.b   1       // -340 non-zero means draw mouse form on vblank
-_mouse_flag:    .ds.b   1       // -339 non-zero if mouse ints disabled
+_mouse_flag:    .ds.b   1       // -339 non-zero while mouse cursor is being modified
 
 _sav_cur_x:     .ds.w   1       // -338 save area for cursor cell coords.
 _sav_cur_y:     .ds.w   1       // -336 save area for cursor cell coords.
@@ -348,7 +348,7 @@ _COLBIT5:       .ds.w   1       // we do not use them (yet?)
 _COLBIT6:       .ds.w   1
 _COLBIT7:       .ds.w   1
 _ext_mouse_cursor_save:         // covers the following five items; note that
-                                // this area is only used when v_planes == 8
+                                // this area is only used when v_planes > 4
 _ext_save_len:  .ds.w   1           // 1630 height of saved form
 _ext_save_addr: .ds.l   1           // 1632 screen addr of saved form
 _ext_save_stat: .ds.b   1           // 1636 save status
